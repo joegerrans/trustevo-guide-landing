@@ -15,9 +15,9 @@
   --teal:#0ABF9E; --teal-d:#089C81; --mist:#F4F5F6; --line:#D9DEE3; --muted:#5B6B7A; --err:#C0392B;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%}
-body{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;background:var(--navy-d);color:#fff;min-height:100vh}
-.wrap{max-width:480px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;background:linear-gradient(135deg,#06172A 0%,#0A2339 60%,#0E3050 100%)}
+html{-webkit-text-size-adjust:100%;min-height:100vh;min-height:100dvh}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;background:var(--navy-d);color:#fff;min-height:100vh;min-height:100dvh}
+.wrap{max-width:480px;margin:0 auto;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom);background:linear-gradient(135deg,#06172A 0%,#0A2339 60%,#0E3050 100%)}
 header{background:#fff;padding:12px 16px;display:flex;align-items:center}
 .logo{display:block;height:44px;width:auto}
 .tile{width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#0A2339,#12385A);border:1px solid rgba(10,191,158,.35);box-shadow:0 4px 10px rgba(6,23,42,.25);display:flex;align-items:center;justify-content:center;flex:none}
@@ -80,6 +80,39 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
 .fbase .fnet{display:flex;align-items:center;justify-content:center;gap:24px;font-size:12px}.fnet svg{color:#4B5563;width:16px;height:16px}
 .fbase .fstrong{color:#9CA3AF;margin-bottom:12px}.fco{line-height:1.7}
 @media(min-width:768px){footer{padding:64px 24px}.fcols{grid-template-columns:1fr 1fr}.fbase .fc{text-align:left}}
+/* Phones, and any short window: keep the step 1 submit button above the Safari toolbar. */
+@media (max-width:520px), (max-height:740px){
+  header{padding:8px 16px}
+  .logo{height:36px}
+  .hero{padding:6px 4px 0}
+  .opill{padding:5px 12px}
+  .the{margin-top:4px}
+  h1{font-size:clamp(28px,8vw,34px);margin-top:0}
+  .sub{margin-top:4px;font-size:14px;line-height:1.25}
+  .card{margin-top:8px;padding:12px 14px 12px}
+  label.l{margin:8px 0 4px}
+  .cons{margin-top:8px}
+  .btn{margin-top:10px}
+  .bar{margin:5px 0 8px}
+}
+@media (max-width:520px), (max-height:700px){
+  .sub2{display:none}
+}
+@media (max-height:640px){
+  header{padding:6px 16px}
+  .logo{height:32px}
+  .hero{padding:2px 4px 0}
+  .the{margin-top:2px}
+  h1{font-size:clamp(24px,7.2vw,30px)}
+  .sub{margin-top:2px}
+  .card{margin-top:6px;padding:8px 14px 10px}
+  h2{font-size:22px}
+  .why{margin-top:2px}
+  label.l{margin:6px 0 3px}
+  input[type=text],input[type=email],input[type=tel]{height:44px}
+  .cons{margin-top:6px}
+  .btn{margin-top:8px;height:48px}
+}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .spin{width:18px;height:18px;border:2.5px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite;display:none}
 .busy .spin{display:inline-block}
