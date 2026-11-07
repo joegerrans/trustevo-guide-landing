@@ -135,7 +135,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
         <div class="err" id="e2">Please enter a valid mobile number</div>
         <button class="btn t" id="b2" type="submit"><span>Continue →</span><i class="spin"></i></button>
       </form>
-      <div class="trust"><span>🔒 Secure</span><span>ICO registered</span><span>No spam</span></div>
+      <div class="trust"><span>🔒 Secure</span></div>
     </section>
 
     <!-- STEP 3 -->
@@ -324,6 +324,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
     post({action:'phone',phone:n}).then(function(r){
       busy($('b2'),false);
       if(!r.ok){ $('ph').classList.add('bad'); return err('e2','Please enter a valid mobile number'); }
+      if(r.recordId && r.sig){ state.recordId=r.recordId; state.sig=r.sig; }
       state.phone=n; show(3);
     }).catch(function(){busy($('b2'),false);err('e2','Something went wrong. Please try again.')});
   });
