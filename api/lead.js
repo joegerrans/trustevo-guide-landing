@@ -40,7 +40,7 @@ const F = {
   source: 'Funnel Source', campaign: 'Campaign Name', adset: 'Ad Set', adId: 'Meta Ad ID', platform: 'Platform',
   // new
   confirmed: 'LP Confirmed', confirmedAt: 'LP Confirmed At', confirmedPhone: 'Confirmed Phone',
-  band: 'Self-Declared Band', consent: 'LP Consent'
+  band: 'Self-Declared Band', consent: 'LP Consent', duplicate: 'Duplicate'
 };
 const CONSENT_TEXT = 'I understand I will receive this guide and ongoing insights from TrustEvo by email, phone or SMS. You can opt out anytime.';
 
@@ -128,6 +128,15 @@ function phoneFormula(e164, selfId) {
   return `AND(${metaWindow(selfId)},OR(${ors}))`;
 }
 
+function duplicatePhoneFormula(e164, selfId) {
+  const stripped = strippedPhoneExpr();
+  const ors = phoneVariants(e164).map((v) => {
+    const lit = formulaString(v);
+    return `OR({${F.phone}}=${lit},${stripped}=${lit})`;
+  }).join(',');
+  return `AND(RECORD_ID()!=${formulaString(selfId)},OR(${ors}))`;
+}
+
 function listQuery(formula) {
   return `?filterByFormula=${encodeURIComponent(formula)}&maxRecords=1&sort%5B0%5D%5Bfield%5D=Date%20Captured&sort%5B0%5D%5Bdirection%5D=desc`;
 }
@@ -194,6 +203,11 @@ async function findByEmail(email) {
 
 async function findRecentMetaByPhone(e164, selfId) {
   const j = await at('GET', listQuery(phoneFormula(e164, selfId)));
+  return j.records && j.records[0];
+}
+
+async function findOtherByPhone(e164, selfId) {
+  const j = await at('GET', listQuery(duplicatePhoneFormula(e164, selfId)));
   return j.records && j.records[0];
 }
 
@@ -272,6 +286,10 @@ async function handler(req, res) {
 
       const t = b.track || {};
       const consent = `${new Date().toISOString()} | ${route === 'access' ? 'guide-wtp/access' : 'guide-wtp'} | ${CONSENT_TEXT}`;
+      let emailDuplicate = false;
+      if (route !== 'access') {
+        try { emailDuplicate = !!(await findByEmail(email)); } catch (e) { emailDuplicate = false; }
+      }
       let rec = route === 'access' ? await findByEmail(email) : null;
       let created = false;
       if (rec) {
@@ -279,7 +297,7 @@ async function handler(req, res) {
         rec = await write(rec.id, { [F.consent]: consent });
       } else {
         created = true;
-        rec = await write(null, {
+        const fields = {
           [F.name]: joinName(b.first, b.last), [F.email]: email, [F.status]: 'New',
           [F.source]: route === 'access' ? 'Meta' : 'Meta LP',
           [F.campaign]: route === 'access'
@@ -287,7 +305,9 @@ async function handler(req, res) {
             : directCampaign(b.guide, t.campaign),
           [F.adset]: t.adset || undefined, [F.adId]: t.adId || undefined, [F.platform]: t.platform || undefined,
           [F.consent]: consent
-        });
+        };
+        if (emailDuplicate) fields[F.duplicate] = true;
+        rec = await write(null, fields);
       }
       await n8n({ step: 'start', route, created, recordId: rec.id, email, first: b.first, last: b.last, track: t });
       const sig = route === 'access' && created ? signNew(rec.id) : sign(rec.id);
@@ -332,6 +352,12 @@ async function handler(req, res) {
         const fields = route === 'access'
           ? { [F.confirmedPhone]: e164, [F.confirmed]: true, [F.confirmedAt]: new Date().toISOString() }
           : { [F.phone]: e164, [F.valid]: true };
+        if (route !== 'access') {
+          try {
+            const other = otherRecord(await findOtherByPhone(e164, session.id), session.id);
+            if (other) fields[F.duplicate] = true;
+          } catch (e) { /* a failed duplicate lookup must not block the lead */ }
+        }
         await write(session.id, fields);
       }
       await n8n({ step: 'phone', route, recordId: targetId, phone: e164, lineStatus: lk.status || null });

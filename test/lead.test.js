@@ -213,9 +213,11 @@ test('direct ad route labels new Meta LP records with the guide and utm campaign
     guide: '45C',
     track: { campaign: 'Launch', adId: 'ad9', platform: 'facebook' }
   }));
-  assert.equal(calls.some((call) => call.method === 'GET'), false);
+  assert.equal(calls.filter((call) => call.method === 'GET').length, 1);
+  assert.match(calls[0].formula, /\{Email\}/);
   assert.equal(res.body.sig, lead.sign('recNEW'));
   const created = calls.find((call) => call.method === 'POST').body.fields;
+  assert.equal(created.Duplicate, undefined);
   assert.equal(created['Funnel Source'], 'Meta LP');
   assert.equal(created['Campaign Name'], '45C Direct | Launch');
   assert.equal(created['Meta Ad ID'], 'ad9');
@@ -241,7 +243,7 @@ test('phone and confirmed phone are stored as E.164 and a new access lead is kep
     const patch = calls.find((call) => call.method === 'PATCH');
     assert.equal(patch.body.fields.Phone, '+447700900123', raw);
     assert.equal(patch.body.fields['Valid Number?'], true);
-    assert.equal(calls.some((call) => call.formula && call.formula.includes('{Phone}')), false);
+    assert.equal(patch.body.fields.Duplicate, undefined);
   }
 
   const calls = installAirtable({
@@ -404,6 +406,66 @@ test('invalid numbers and bad sessions do not write', async () => {
   });
   assert.equal(res.statusCode, 400);
   assert.equal(res.body.error, 'session');
+});
+
+test('ad route ticks Duplicate on the new record only', async () => {
+  const emailCalls = installAirtable({
+    emailRecords: [{ id: 'recOLD', fields: { Email: 'jane@example.com' } }]
+  });
+  const emailStart = await post(startBody({ route: 'ad' }));
+  assert.equal(emailStart.body.ok, true);
+  assert.equal(emailStart.body.recordId, 'recNEW');
+  const created = emailCalls.find((call) => call.method === 'POST').body.fields;
+  assert.equal(created.Duplicate, true);
+  assert.equal(emailCalls.some((call) => call.method === 'PATCH'), false);
+  assert.equal(emailCalls.some((call) => call.recordId === 'recOLD' && call.method !== 'GET'), false);
+
+  const noneCalls = installAirtable();
+  const noneStart = await post(startBody({ route: 'ad', email: 'new@example.com' }));
+  assert.equal(noneCalls.find((call) => call.method === 'POST').body.fields.Duplicate, undefined);
+  const nonePhone = await post({
+    action: 'phone', route: 'ad', guide: 'wtp', phone: '07700900123',
+    recordId: noneStart.body.recordId, sig: noneStart.body.sig
+  });
+  assert.equal(nonePhone.body.ok, true);
+  const nonePatch = noneCalls.find((call) => call.method === 'PATCH');
+  assert.equal(nonePatch.recordId, 'recNEW');
+  assert.equal(nonePatch.body.fields.Phone, '+447700900123');
+  assert.equal(nonePatch.body.fields.Duplicate, undefined);
+
+  const phoneCalls = installAirtable({
+    phoneRecords: [{ id: 'recOLDPHONE', fields: { Phone: '+447700900123' } }]
+  });
+  const phoneStart = await post(startBody({ route: 'ad', email: 'fresh@example.com' }));
+  assert.equal(phoneCalls.find((call) => call.method === 'POST').body.fields.Duplicate, undefined);
+  const phone = await post({
+    action: 'phone', route: 'ad', guide: 'wtp', phone: '07700 900123',
+    recordId: phoneStart.body.recordId, sig: phoneStart.body.sig
+  });
+  assert.equal(phone.body.recordId, 'recNEW');
+  const phoneLookup = phoneCalls.find((call) => call.formula && call.formula.includes('{Phone}'));
+  assert.match(phoneLookup.formula, /RECORD_ID\(\)!='recNEW'/);
+  assert.match(phoneLookup.formula, /\+447700900123/);
+  assert.equal(phoneLookup.formula.includes('Funnel Source'), false);
+  const phonePatch = phoneCalls.find((call) => call.method === 'PATCH');
+  assert.equal(phonePatch.recordId, 'recNEW');
+  assert.equal(phonePatch.body.fields.Duplicate, true);
+  assert.equal(phonePatch.body.fields.Phone, '+447700900123');
+  assert.equal(phoneCalls.some((call) => call.recordId === 'recOLDPHONE' && call.method !== 'GET'), false);
+});
+
+test('a failed ad-route duplicate lookup still saves the lead', async () => {
+  const calls = [];
+  global.fetch = async (url, init = {}) => {
+    const call = parseCall(url, init);
+    calls.push(call);
+    if (call.method === 'GET') throw new Error('airtable down');
+    return { ok: true, status: 200, json: async () => ({ id: 'recNEW', fields: call.body.fields }) };
+  };
+  const res = await post(startBody({ route: 'ad', email: 'down@example.com' }));
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.recordId, 'recNEW');
+  assert.equal(calls.find((call) => call.method === 'POST').body.fields.Duplicate, undefined);
 });
 
 test('the trust line keeps only Secure and the phone step carries the matched session', () => {
