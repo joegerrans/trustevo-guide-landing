@@ -105,6 +105,37 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
 .demo{background:#FFF4D6;color:#5A4500;font-size:12px;padding:8px 12px;text-align:center}
 .demo a{color:#5A4500;font-weight:700;margin:0 4px}
 [hidden]{display:none!important}
+.cover{display:none}
+@media (min-width:481px){
+  .wrap{max-width:none;width:100%}
+  header{padding-top:16px;padding-bottom:16px;padding-left:max(24px,calc((100% - 640px)/2));padding-right:max(24px,calc((100% - 640px)/2))}
+  .logo{height:48px}
+  main{width:min(640px,calc(100% - 48px));max-width:640px;margin:0 auto;padding:8px 0 32px}
+  .hero{padding:32px 8px 4px}
+  h1{font-size:52px;line-height:.98}
+  .info{padding:40px 24px}
+  .info h4,.info p{max-width:800px;margin-left:auto;margin-right:auto}
+  footer{padding-top:64px;padding-bottom:64px;padding-left:max(24px,calc((100% - 800px)/2));padding-right:max(24px,calc((100% - 800px)/2))}
+}
+@media (min-width:1024px){
+  header{padding-top:18px;padding-bottom:18px;padding-left:max(32px,calc((100% - 1200px)/2 + 32px));padding-right:max(32px,calc((100% - 1200px)/2 + 32px))}
+  main{width:100%;max-width:1200px;padding:28px 32px 48px}
+  #s1{display:grid;grid-template-columns:minmax(0,1fr) 460px;column-gap:48px;align-items:start}
+  #s1 .hero{text-align:left;padding:4px 0 0;margin:0}
+  #s1 h1{font-size:56px;line-height:.96;margin-top:0}
+  #s1 .sub{max-width:34rem}
+  #s1 .card{margin-top:0}
+  #s2,#s3{max-width:460px;margin-left:auto;margin-right:auto}
+  #s4{max-width:640px;margin-left:auto;margin-right:auto}
+  .cover{display:block;margin-top:36px}
+  .cover-book{position:relative;width:250px;min-height:330px;display:flex;flex-direction:column;align-items:flex-start;padding:32px 26px 26px 40px;border-radius:4px 18px 18px 4px;background:linear-gradient(165deg,#06172A 0%,#0A2339 58%,#12385A 100%);border:1px solid rgba(10,191,158,.45);box-shadow:0 18px 44px rgba(0,0,0,.35);overflow:hidden}
+  .cover-book::before{content:"";position:absolute;left:0;top:0;bottom:0;width:14px;background:linear-gradient(#0ABF9E,#067a68)}
+  .cover .tile{width:52px;height:52px;border-radius:12px;margin-bottom:22px}
+  .cover .tile::after{content:"";width:16px;height:9px;border:solid var(--teal);border-width:0 0 3px 3px;transform:rotate(-45deg) translateY(-1px)}
+  .cover-title{font-family:'DM Serif Display',serif;font-size:34px;line-height:.98;color:#fff}
+  .cover-title em{display:block;font-style:normal;color:var(--teal);margin-top:2px}
+  .cover .word{color:#fff;font-size:24px;margin-top:auto;padding-top:28px}
+}
 </style>
 </head>
 <body>
@@ -119,6 +150,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
         <h1>The Wealth<em>Turning Point</em></h1>
         <div class="sub">The Complete Guide to Retirement &amp; Inheritance Planning</div>
         <div class="sub2">16 chapters, interactive and PDF, plus ongoing insights</div>
+        <div class="cover" aria-hidden="true"><div class="cover-book"><div class="tile"></div><div class="cover-title">The Wealth<em>Turning Point</em></div><div class="word">Trust<span>Evo</span></div></div></div>
       </div>
       <form class="card" id="f1" novalidate>
         <div class="prog"><span>Step 1 of 3</span><span>30 seconds</span></div><div class="bar"><i style="width:33%"></i></div>
