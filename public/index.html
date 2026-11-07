@@ -128,11 +128,11 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
         <h2 id="h1q">Where should we send your guide?</h2>
         <div class="why">So we can send your guide and personalise your ongoing insights.</div>
         <div class="row2">
-          <div><label class="l" for="fn">First name</label><input id="fn" type="text" autocomplete="given-name" autocapitalize="words" required></div>
-          <div><label class="l" for="ln">Last name</label><input id="ln" type="text" autocomplete="family-name" autocapitalize="words" required></div>
+          <div><label class="l" for="fn">First name</label><input id="fn" type="text" name="given-name" autocomplete="given-name" autocapitalize="words" required></div>
+          <div><label class="l" for="ln">Last name</label><input id="ln" type="text" name="family-name" autocomplete="family-name" autocapitalize="words" required></div>
         </div>
         <label class="l" for="em">Email address</label>
-        <input id="em" type="email" autocomplete="email" inputmode="email" required>
+        <input id="em" type="email" name="email" autocomplete="email" inputmode="email" required>
         <input class="hp" id="hp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
         <label class="cons"><input type="checkbox" id="cn"><span>I understand I will receive this guide and ongoing insights from TrustEvo by email, phone or SMS. You can opt out anytime. <a href="https://trustevo.co.uk/privacy" target="_blank" rel="noopener">Privacy policy</a></span></label>
         <div class="err" id="e1"></div>
@@ -146,7 +146,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
         <div class="prog"><span>Step 2 of 3</span><span>Nearly there</span></div><div class="bar"><i style="width:66%"></i></div>
         <h2>Thanks, <span class="nm"></span>. Please provide a valid mobile number</h2>
         <label class="l" for="ph">Mobile number</label>
-        <input id="ph" type="tel" autocomplete="tel" inputmode="tel" placeholder="07" required>
+        <input id="ph" type="tel" name="tel" autocomplete="tel" inputmode="tel" placeholder="07" required>
         <div class="err" id="e2">Please enter a valid mobile number</div>
         <button class="btn t" id="b2" type="submit"><span>Continue →</span><i class="spin"></i></button>
       </form>
