@@ -80,6 +80,13 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
 .fbase .fnet{display:flex;align-items:center;justify-content:center;gap:24px;font-size:12px}.fnet svg{color:#4B5563;width:16px;height:16px}
 .fbase .fstrong{color:#9CA3AF;margin-bottom:12px}.fco{line-height:1.7}
 @media(min-width:768px){footer{padding:64px 24px}.fcols{grid-template-columns:1fr 1fr}.fbase .fc{text-align:left}}
+/* Landscape tablets around 768px tall: a little less hero space so the button stays on screen. */
+@media (min-width:521px) and (max-height:820px) and (min-height:641px){
+  .hero{padding:12px 4px 2px}
+  .the{margin-top:8px}
+  .sub{margin-top:8px}
+  .card{margin-top:12px}
+}
 /* Phones, and any short window: keep the step 1 submit button above the Safari toolbar. */
 @media (max-width:520px), (max-height:740px){
   header{padding:8px 16px}
