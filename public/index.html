@@ -15,9 +15,9 @@
   --teal:#0ABF9E; --teal-d:#089C81; --mist:#F4F5F6; --line:#D9DEE3; --muted:#5B6B7A; --err:#C0392B;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%;min-height:100vh;min-height:100dvh}
-body{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;background:var(--navy-d);color:#fff;min-height:100vh;min-height:100dvh}
-.wrap{max-width:480px;margin:0 auto;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom);background:linear-gradient(135deg,#06172A 0%,#0A2339 60%,#0E3050 100%)}
+html{-webkit-text-size-adjust:100%}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;background:var(--navy-d);color:#fff;min-height:100vh}
+.wrap{max-width:480px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;background:linear-gradient(135deg,#06172A 0%,#0A2339 60%,#0E3050 100%)}
 header{background:#fff;padding:12px 16px;display:flex;align-items:center}
 .logo{display:block;height:44px;width:auto}
 .tile{width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#0A2339,#12385A);border:1px solid rgba(10,191,158,.35);box-shadow:0 4px 10px rgba(6,23,42,.25);display:flex;align-items:center;justify-content:center;flex:none}
@@ -80,52 +80,21 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
 .fbase .fnet{display:flex;align-items:center;justify-content:center;gap:24px;font-size:12px}.fnet svg{color:#4B5563;width:16px;height:16px}
 .fbase .fstrong{color:#9CA3AF;margin-bottom:12px}.fco{line-height:1.7}
 @media(min-width:768px){footer{padding:64px 24px}.fcols{grid-template-columns:1fr 1fr}.fbase .fc{text-align:left}}
-/* Landscape tablets around 768px tall: a little less hero space so the button stays on screen. */
-@media (min-width:521px) and (max-height:820px) and (min-height:641px){
-  .hero{padding:12px 4px 2px}
-  .the{margin-top:8px}
-  .sub{margin-top:8px}
-  .card{margin-top:12px}
-}
-/* Phones, and any short window: keep the step 1 submit button above the Safari toolbar. */
-@media (max-width:520px), (max-height:740px){
-  header{padding:8px 16px}
-  .logo{height:36px}
-  .hero{padding:6px 4px 0}
-  .opill{padding:5px 12px}
-  .the{margin-top:4px}
-  h1{font-size:clamp(28px,8vw,34px);margin-top:0}
-  .sub{margin-top:4px;font-size:14px;line-height:1.25}
-  .card{margin-top:8px;padding:12px 14px 12px}
-  label.l{margin:8px 0 4px}
-  .cons{margin-top:8px}
-  .btn{margin-top:10px}
-  .bar{margin:5px 0 8px}
-}
-@media (max-width:520px), (max-height:700px){
-  .sub2{display:none}
-}
-@media (max-height:640px){
-  header{padding:6px 16px}
-  .logo{height:32px}
-  .hero{padding:2px 4px 0}
-  .the{margin-top:2px}
-  h1{font-size:clamp(24px,7.2vw,30px)}
-  .sub{margin-top:2px}
-  .card{margin-top:6px;padding:8px 14px 10px}
-  h2{font-size:22px}
-  .why{margin-top:2px}
-  label.l{margin:6px 0 3px}
-  input[type=text],input[type=email],input[type=tel]{height:44px}
-  .cons{margin-top:6px}
-  .btn{margin-top:8px;height:48px}
-}
-/* Phones only: about 20% smaller than the mobile title size above. */
 @media (max-width:480px){
-  h1{font-size:clamp(22px,6.4vw,27px)}
-}
-@media (max-width:480px) and (max-height:640px){
-  h1{font-size:clamp(19px,5.76vw,24px)}
+  header{padding:10px 16px}
+  .logo{height:40px}
+  .hero{padding-top:18px}
+  .the{font-size:11px;margin-top:0}
+  h1{font-size:34px;line-height:1.0;margin-top:2px}
+  .sub{font-size:15px;line-height:1.35;margin-top:10px}
+  .sub2{display:none}
+  .card{margin-top:16px;padding:16px}
+  h2{font-size:22px;line-height:1.2}
+  .why{font-size:13px;margin-top:4px}
+  label.l{font-size:12.5px;margin:10px 0 4px}
+  input[type=text],input[type=email],input[type=tel]{height:46px}
+  .cons{font-size:12.5px;line-height:1.45;margin-top:12px}
+  .btn{height:52px;margin-top:14px}
 }
 .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .spin{width:18px;height:18px;border:2.5px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite;display:none}
@@ -188,13 +157,12 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
     <section id="s3" hidden>
       <form class="card" id="f3" novalidate style="margin-top:22px">
         <div class="prog"><span>Step 3 of 3</span><span>Last one</span></div><div class="bar"><i style="width:100%"></i></div>
-        <h2>Roughly how much is in your pensions and investments?</h2>
-        <div class="why">This helps us tailor your ongoing insights to your situation.</div>
+        <h2>Estimate the value of your pensions and investments</h2>
+        <div class="why">Please select an amount, not including property. This helps us tailor your ongoing insights.</div>
         <div class="opts" id="opts">
           <button type="button" class="opt" data-b="u100">Under £100,000</button>
           <button type="button" class="opt" data-b="100-250">£100,000 to £250,000</button>
-          <button type="button" class="opt" data-b="250-350">£250,000 to £350,000</button>
-          <button type="button" class="opt" data-b="350-500">£350,000 to £500,000</button>
+          <button type="button" class="opt" data-b="250-500">£250,000 to £500,000</button>
           <button type="button" class="opt" data-b="500p">£500,000+</button>
         </div>
         <div class="err" id="e3">Please choose one option</div>
@@ -265,8 +233,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
   var BANDS = {
     'u100':    {label:'Under £100,000',        value:1},
     '100-250': {label:'£100,000 to £250,000',  value:36},
-    '250-350': {label:'£250,000 to £350,000',  value:45},
-    '350-500': {label:'£350,000 to £500,000',  value:55},
+    '250-500': {label:'£250,000 to £500,000',  value:50},
     '500p':    {label:'£500,000+',             value:64}
   };
 

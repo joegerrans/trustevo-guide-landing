@@ -29,8 +29,7 @@ const GUIDES = {
 const BANDS = {
   'u100':    { label: 'Under £100,000',       value: 1 },
   '100-250': { label: '£100,000 to £250,000', value: 36 },
-  '250-350': { label: '£250,000 to £350,000', value: 45 },
-  '350-500': { label: '£350,000 to £500,000', value: 55 },
+  '250-500': { label: '£250,000 to £500,000', value: 50 },
   '500p':    { label: '£500,000+',            value: 64 }
 };
 
@@ -129,11 +128,6 @@ function phoneFormula(e164, selfId) {
   return `AND(${metaWindow(selfId)},OR(${ors}))`;
 }
 
-function nameFormula(fullName, selfId) {
-  const exact = `LOWER(TRIM({${F.name}}))=LOWER(${formulaString(String(fullName || '').trim())})`;
-  return `AND(${exact},${metaWindow(selfId)})`;
-}
-
 function listQuery(formula) {
   return `?filterByFormula=${encodeURIComponent(formula)}&maxRecords=1&sort%5B0%5D%5Bfield%5D=Date%20Captured&sort%5B0%5D%5Bdirection%5D=desc`;
 }
@@ -203,13 +197,6 @@ async function findRecentMetaByPhone(e164, selfId) {
   return j.records && j.records[0];
 }
 
-async function findRecentMetaByName(fullName, selfId) {
-  const name = String(fullName || '').trim();
-  if (!name) return null;
-  const j = await at('GET', listQuery(nameFormula(name, selfId)));
-  return j.records && j.records[0];
-}
-
 function otherRecord(rec, selfId) {
   if (!rec || !rec.id || rec.id === selfId) return null;
   return rec;
@@ -276,7 +263,8 @@ async function handler(req, res) {
   const test = !process.env.AIRTABLE_TOKEN;
 
   try {
-    // STEP 1: name, email, consent. Access route matches email only, then creates immediately.
+    // STEP 1: name, email, consent. The ad route always creates a new lead.
+    // Only /access updates an existing lead, and only by email at this step.
     if (b.action === 'start') {
       const email = String(b.email || '').trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || !b.first || !b.last || !b.consent) return res.json({ ok: false, error: 'missing' });
@@ -310,7 +298,7 @@ async function handler(req, res) {
     const session = readSession(b.recordId, b.sig);
     if (!session) return res.status(400).json({ ok: false, error: 'session' });
 
-    // STEP 2: mobile. On a newly created access lead: phone match, then exact name, both within 2 hours.
+    // STEP 2: mobile. A newly created access lead can still match a recent Meta lead by phone.
     if (b.action === 'phone') {
       const e164 = normPhone(b.phone);
       if (!e164) return res.json({ ok: false, error: 'invalid' });
@@ -320,15 +308,9 @@ async function handler(req, res) {
 
       let targetId = session.id;
       if (route === 'access' && session.created) {
-        let hit = otherRecord(await findRecentMetaByPhone(e164, session.id), session.id);
-        let current = null;
-        if (!hit) {
-          current = await at('GET', `/${session.id}`);
-          const name = String((current.fields || {})[F.name] || '').trim();
-          if (name) hit = otherRecord(await findRecentMetaByName(name, session.id), session.id);
-        }
+        const hit = otherRecord(await findRecentMetaByPhone(e164, session.id), session.id);
         if (hit) {
-          if (!current) current = await at('GET', `/${session.id}`);
+          const current = await at('GET', `/${session.id}`);
           const fields = {
             [F.confirmedPhone]: e164,
             [F.confirmed]: true,
@@ -378,7 +360,6 @@ handler.normPhone = normPhone;
 handler.directCampaign = directCampaign;
 handler.emailFormula = emailFormula;
 handler.phoneFormula = phoneFormula;
-handler.nameFormula = nameFormula;
 handler.formulaString = formulaString;
 handler.sign = sign;
 handler.signNew = signNew;

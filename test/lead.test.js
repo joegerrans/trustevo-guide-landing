@@ -127,28 +127,18 @@ test('normPhone writes UK mobiles as +447 E.164', () => {
   assert.equal(lead.normPhone(''), null);
 });
 
-test('name match is an exact trimmed case-insensitive full name inside the Meta window', () => {
-  const formula = lead.nameFormula('  Jane Doe  ', 'recNEW');
-  assert.match(formula, /^AND\(LOWER\(TRIM\(\{Full Name\}\)\)=LOWER\('Jane Doe'\)/);
-  assert.match(formula, /\{Funnel Source\}='Meta'/);
-  assert.match(formula, /DATETIME_DIFF\(NOW\(\),\{Date Captured\},'minutes'\)>=0/);
-  assert.match(formula, /DATETIME_DIFF\(NOW\(\),\{Date Captured\},'minutes'\)<=120/);
-  assert.match(formula, /RECORD_ID\(\)!='recNEW'/);
-  assert.equal(formula.includes('FIND('), false);
-  assert.equal(formula.includes('SEARCH('), false);
-  assert.equal(formula.includes('REGEX'), false);
-  assert.equal(formula.includes("LOWER('Jane')"), false);
-  assert.equal(formula.includes("LOWER('Doe')"), false);
-  assert.equal(formula.includes("'Meta LP'"), false);
+test('matching does not use a name formula', () => {
+  assert.equal(lead.nameFormula, undefined);
+  const phone = lead.phoneFormula('+447700900123', 'recNEW');
+  assert.equal(phone.includes('Full Name'), false);
+  assert.match(phone, /\{Phone\}/);
 });
 
 test('formula values cannot break out of the string literal', () => {
   assert.equal(lead.formulaString("O'Brien"), "'O\\'Brien'");
   assert.equal(lead.formulaString('a\\b'), "'a\\\\b'");
   assert.equal(lead.formulaString("Ann'); TRUE()"), "'Ann\\'); TRUE()'");
-  const formula = lead.nameFormula("Ann'); TRUE()", 'recNE');
-  assert.equal(formula.startsWith("AND(LOWER(TRIM({Full Name}))=LOWER('Ann\\'); TRUE()')"), true);
-  const phone = lead.phoneFormula('+447700900123', "rec'X");
+  const phone = lead.phoneFormula("+447700900123", "rec'X");
   for (const variant of ['+447700900123', '447700900123', '07700900123', '00447700900123']) {
     assert.ok(phone.includes(lead.formulaString(variant)), variant);
   }
@@ -268,7 +258,7 @@ test('phone and confirmed phone are stored as E.164 and a new access lead is kep
   const kinds = calls.filter((call) => call.formula).map((call) => (
     call.formula.includes('{Phone}') ? 'phone' : call.formula.includes('{Full Name}') ? 'name' : 'email'
   ));
-  assert.deepEqual(kinds, ['email', 'phone', 'name']);
+  assert.deepEqual(kinds, ['email', 'phone']);
   const patch = calls.find((call) => call.method === 'PATCH');
   assert.equal(patch.recordId, 'recNEW');
   assert.equal(patch.body.fields['Confirmed Phone'], '+447700900123');
@@ -325,36 +315,37 @@ test('a new access lead adopts a recent Meta phone match and the next step uses 
   assert.equal(bandPatch.body.fields['Self-Declared Band'], '£100,000 to £250,000');
 });
 
-test('phone miss falls back to an exact full-name match', async () => {
+test('a phone miss does not match by name and keeps the new access record', async () => {
   const calls = installAirtable({
     nameRecords: [{ id: 'recNAME', fields: { 'Full Name': 'jane DOE', 'Funnel Source': 'Meta' } }],
-    recordFields: { recNEW: { 'Full Name': 'jane DOE', 'LP Consent': 'stored consent' } },
-    noteStatus: 200
+    recordFields: { recNEW: { 'Full Name': 'jane DOE', 'LP Consent': 'stored consent' } }
   });
   const start = await post(startBody({ first: 'jane', last: 'DOE' }));
-  assert.equal(calls.find((call) => call.method === 'POST').body.fields['Full Name'], 'jane DOE');
   const phone = await post({
     action: 'phone', route: 'access', guide: 'wtp', phone: '+447700900123',
     recordId: start.body.recordId, sig: start.body.sig
   });
-  assert.equal(phone.body.recordId, 'recNAME');
-  assert.equal(phone.body.sig, lead.sign('recNAME'));
-  const kinds = calls.filter((call) => call.formula).map((call) => (
-    call.formula.includes('{Phone}') ? 'phone' : call.formula.includes('{Full Name}') ? 'name' : 'email'
-  ));
-  assert.deepEqual(kinds, ['email', 'phone', 'name']);
-  const nameGet = calls.find((call) => call.formula && call.formula.includes('{Full Name}'));
-  assert.match(nameGet.formula, /LOWER\(TRIM\(\{Full Name\}\)\)=LOWER\('jane DOE'\)/);
-  assert.equal(nameGet.formula.includes('FIND('), false);
-  assert.equal(nameGet.formula.includes('SEARCH('), false);
-  assert.match(nameGet.formula, /RECORD_ID\(\)!='recNEW'/);
-  const confirmed = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recNAME');
+  assert.equal(phone.body.recordId, 'recNEW');
+  assert.equal(calls.some((call) => call.formula && call.formula.includes('Full Name')), false);
+  const confirmed = calls.find((call) => call.method === 'PATCH');
+  assert.equal(confirmed.recordId, 'recNEW');
   assert.equal(confirmed.body.fields['Confirmed Phone'], '+447700900123');
-  assert.equal(confirmed.body.fields['LP Consent'], 'stored consent');
-  assert.equal(confirmed.body.fields['Full Name'], undefined);
-  assert.equal(confirmed.body.fields['Campaign Name'], undefined);
-  const note = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
-  assert.equal(note.body.fields.Notes, 'Merged into recNAME');
+});
+
+test('the combined band is accepted and the old splits are not', async () => {
+  installAirtable();
+  const start = await post(startBody({ route: 'ad', email: 'band@example.com' }));
+  const ok = await post({
+    action: 'band', route: 'ad', guide: 'wtp', band: '250-500',
+    recordId: start.body.recordId, sig: start.body.sig
+  });
+  assert.equal(ok.body.ok, true);
+  const bad = await post({
+    action: 'band', route: 'ad', guide: 'wtp', band: '250-350',
+    recordId: start.body.recordId, sig: start.body.sig
+  });
+  assert.equal(bad.body.ok, false);
+  assert.equal(bad.body.error, 'band');
 });
 
 test('an email match is not merged again by phone, and a missing notes field does not block the lead', async () => {

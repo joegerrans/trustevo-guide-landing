@@ -66,8 +66,7 @@ Meeting price × 0.70 contacted × 0.20 booked × 0.65 held:
 |---|---|
 | Under £100,000 | £1 |
 | £100,000 to £250,000 | £36 |
-| £250,000 to £350,000 | £45 |
-| £350,000 to £500,000 | £55 |
+| £250,000 to £500,000 | £50 |
 | £500,000+ | £64 |
 
 You can change these in `api/lead.js` (BANDS) and in `public/index.html` (BANDS).
