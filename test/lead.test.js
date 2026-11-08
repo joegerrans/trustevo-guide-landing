@@ -22,9 +22,9 @@ function mockRes() {
   };
 }
 
-async function post(body) {
+async function post(body, headers) {
   const res = mockRes();
-  await lead({ method: 'POST', body, headers: {} }, res);
+  await lead({ method: 'POST', body, headers: headers || {} }, res);
   return res;
 }
 
@@ -54,6 +54,9 @@ function installAirtable(opts = {}) {
   global.fetch = async (url, init = {}) => {
     const call = parseCall(url, init);
     calls.push(call);
+    if (String(url).includes('graph.facebook.com')) {
+      return { ok: true, status: 200, json: async () => ({ events_received: 1 }) };
+    }
     if (call.method === 'DELETE') throw new Error('refusing to delete');
     let status = 200;
     let json;
@@ -218,7 +221,7 @@ test('direct ad route labels new Meta LP records with the guide and utm campaign
   assert.equal(res.body.sig, lead.sign('recNEW'));
   const created = calls.find((call) => call.method === 'POST').body.fields;
   assert.equal(created.Duplicate, undefined);
-  assert.equal(created['Funnel Source'], 'Meta LP');
+  assert.equal(created['Funnel Source'], 'Meta');
   assert.equal(created['Campaign Name'], '45C Direct | Launch');
   assert.equal(created['Meta Ad ID'], 'ad9');
   assert.equal(created.Platform, 'facebook');
@@ -466,6 +469,150 @@ test('a failed ad-route duplicate lookup still saves the lead', async () => {
   assert.equal(res.body.ok, true);
   assert.equal(res.body.recordId, 'recNEW');
   assert.equal(calls.find((call) => call.method === 'POST').body.fields.Duplicate, undefined);
+});
+
+function capiCalls(calls) {
+  return calls.filter((call) => call.url.includes('graph.facebook.com'));
+}
+
+async function saveBand(track, headers) {
+  process.env.META_PIXEL_ID = 'pixel-test';
+  process.env.META_CAPI_TOKEN = 'capi-test';
+  const calls = installAirtable();
+  const start = await post(startBody({
+    route: 'ad',
+    email: `band-${Math.random().toString(16).slice(2)}@example.com`,
+    track
+  }), headers);
+  assert.equal(start.body.ok, true);
+  const phone = await post({
+    action: 'phone', route: 'ad', guide: 'wtp', phone: '07700911123',
+    recordId: start.body.recordId, sig: start.body.sig, track
+  }, headers);
+  assert.equal(phone.body.ok, true);
+  const band = await post({
+    action: 'band', route: 'ad', guide: 'wtp', band: 'u100', eventId: 'evt-test',
+    recordId: phone.body.recordId, sig: phone.body.sig, track,
+    fbc: headers && headers.fbc
+  }, headers);
+  assert.equal(band.body.ok, true);
+  return { calls, created: calls.find((call) => call.method === 'POST').body.fields };
+}
+
+test('ad route maps funnel source and campaign, and sends Meta events only for Meta traffic', async () => {
+  assert.equal(lead.funnelSource({ platform: 'linkedin' }), 'LinkedIn');
+  assert.equal(lead.funnelSource({ platform: 'LINKEDIN', fbc: 'fb.1.1.cookie' }), 'LinkedIn');
+  assert.equal(lead.funnelSource({ platform: 'facebook' }), 'Meta');
+  assert.equal(lead.funnelSource({ platform: 'IG' }), 'Meta');
+  assert.equal(lead.funnelSource({ platform: 'google', fbclid: 'click' }), 'Meta');
+  assert.equal(lead.funnelSource({ platform: 'email' }), 'Website');
+  assert.equal(lead.funnelSource({ platform: 'tiktok' }), 'Other');
+  assert.equal(lead.funnelSource({}), 'Other');
+  assert.equal(lead.adCampaign('wtp', { platform: 'linkedin', medium: 'post' }), 'LinkedIn post');
+  assert.equal(lead.adCampaign('wtp', { platform: 'linkedin', medium: 'dm' }), 'LinkedIn DM');
+  assert.equal(lead.adCampaign('45c', { platform: 'linkedin', medium: 'post', campaign: 'Launch' }), '45C Direct | Launch');
+  assert.equal(lead.adCampaign('wtp', {}), 'WTP Direct');
+  assert.equal(lead.metaTraffic({ platform: 'linkedin' }, ''), false);
+  assert.equal(lead.metaTraffic({ platform: 'google' }, 'fb.1.1.cookie'), true);
+  assert.equal(lead.metaTraffic({ isMeta: true }, ''), false);
+
+  try {
+    const linkedin = await saveBand({ platform: 'linkedin', medium: 'post' });
+    assert.equal(linkedin.created['Funnel Source'], 'LinkedIn');
+    assert.equal(linkedin.created['Campaign Name'], 'LinkedIn post');
+    assert.equal(linkedin.created.Platform, 'linkedin');
+    assert.equal(capiCalls(linkedin.calls).length, 0);
+    assert.equal(linkedin.calls.some((call) => call.method === 'POST'), true);
+
+    const aliases = [
+      ['facebook', 'Meta'],
+      ['Instagram', 'Meta'],
+      ['fb', 'Meta'],
+      ['IG', 'Meta'],
+      ['google', 'Google'],
+      ['Email', 'Website'],
+      ['tiktok', 'Other'],
+      ['', 'Other']
+    ];
+    for (const [platform, source] of aliases) {
+      const saved = await saveBand({ platform, medium: platform ? 'post' : '' });
+      assert.equal(saved.created['Funnel Source'], source, platform || '(missing)');
+      const sent = capiCalls(saved.calls);
+      if (source === 'Meta') {
+        assert.equal(sent.length, 1, platform);
+        assert.equal(sent[0].body.data[0].event_name, 'Lead');
+      } else {
+        assert.equal(sent.length, 0, platform || '(missing)');
+      }
+    }
+
+    const click = await saveBand({ fbclid: 'IwAR123' });
+    assert.equal(click.created['Funnel Source'], 'Meta');
+    assert.equal(click.created['Campaign Name'], 'WTP Direct');
+    assert.equal(capiCalls(click.calls)[0].body.data[0].event_name, 'Lead');
+
+    const cookieOnly = await saveBand(
+      { platform: 'google', medium: 'cpc' },
+      { cookie: '_fbc=fb.1.1700000000.AbC' }
+    );
+    assert.equal(cookieOnly.created['Funnel Source'], 'Google');
+    assert.equal(cookieOnly.created['Campaign Name'], 'Google CPC');
+    assert.equal(capiCalls(cookieOnly.calls)[0].body.data[0].event_name, 'Lead');
+    assert.equal(capiCalls(cookieOnly.calls)[0].body.data[0].user_data.fbc, 'fb.1.1700000000.AbC');
+
+    const explicit = await saveBand({ platform: 'linkedin', medium: 'dm', campaign: 'Spring Sale' });
+    assert.equal(explicit.created['Funnel Source'], 'LinkedIn');
+    assert.equal(explicit.created['Campaign Name'], 'WTP Direct | Spring Sale');
+    assert.equal(capiCalls(explicit.calls).length, 0);
+
+    const lied = await saveBand({ platform: 'linkedin', medium: 'post', isMeta: true });
+    assert.equal(lied.created['Funnel Source'], 'LinkedIn');
+    assert.equal(capiCalls(lied.calls).length, 0);
+
+    process.env.META_PIXEL_ID = 'pixel-test';
+    process.env.META_CAPI_TOKEN = 'capi-test';
+    const accessCalls = installAirtable();
+    const accessStart = await post(startBody({ track: { platform: 'facebook', campaign: 'Form Ad' } }));
+    const accessBand = await post({
+      action: 'band', route: 'access', guide: 'wtp', band: '100-250', eventId: 'evt-access',
+      recordId: accessStart.body.recordId, sig: accessStart.body.sig,
+      track: { platform: 'facebook', campaign: 'Form Ad' }
+    });
+    assert.equal(accessBand.body.ok, true);
+    assert.equal(accessCalls.find((call) => call.method === 'POST').body.fields['Funnel Source'], 'Meta');
+    assert.equal(accessCalls.find((call) => call.method === 'POST').body.fields['Campaign Name'], 'Form Ad');
+    assert.equal(capiCalls(accessCalls)[0].body.data[0].event_name, 'ConfirmedLead');
+
+    const quietAccess = installAirtable();
+    const quietStart = await post(startBody({ email: 'quiet@example.com' }));
+    await post({
+      action: 'band', route: 'access', guide: 'wtp', band: 'u100', eventId: 'evt-quiet',
+      recordId: quietStart.body.recordId, sig: quietStart.body.sig, track: {}
+    });
+    assert.equal(quietAccess.find((call) => call.method === 'POST').body.fields['Funnel Source'], 'Meta');
+    assert.equal(capiCalls(quietAccess).length, 0);
+  } finally {
+    delete process.env.META_PIXEL_ID;
+    delete process.env.META_CAPI_TOKEN;
+  }
+});
+
+test('the browser fires the pixel event only for Meta traffic', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(html, /medium: qs\.get\('utm_medium'\)/);
+  assert.equal(html.includes('isMeta:'), false);
+  const fn = html.slice(html.indexOf('function isMetaOrigin()'), html.indexOf('function applyRoute()'));
+  const gate = new Function('track', 'cookie', `${fn}; return isMetaOrigin();`);
+  const noCookie = () => '';
+  assert.equal(gate({ platform: 'linkedin', fbclid: '' }, noCookie), false);
+  assert.equal(gate({ platform: 'facebook', fbclid: '' }, noCookie), true);
+  assert.equal(gate({ platform: 'ig', fbclid: '' }, noCookie), true);
+  assert.equal(gate({ platform: 'google', fbclid: 'click' }, noCookie), true);
+  assert.equal(gate({ platform: 'email', fbclid: '' }, () => 'fb.1.1.cookie'), true);
+  assert.equal(gate({ platform: '', fbclid: '' }, noCookie), false);
+  assert.match(html, /function px\(name,params,eid\)\{\s*if\(!isMetaOrigin\(\)\) return;/);
+  assert.match(html, /function maybePixel\(\)\{ if\(isMetaOrigin\(\)\) loadPixel\(\); \}/);
+  assert.equal(html.includes("if(ck==='yes') loadPixel()"), false);
 });
 
 test('the trust line keeps only Secure and the phone step carries the matched session', () => {

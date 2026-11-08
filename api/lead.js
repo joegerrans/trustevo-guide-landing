@@ -82,6 +82,69 @@ function directCampaign(guide, campaignName) {
   return extra ? `${base} | ${extra}` : base;
 }
 
+const META_UTM = new Set(['facebook', 'instagram', 'fb', 'ig']);
+
+function normToken(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function trackSource(track) {
+  return normToken(track && (track.platform || track.source));
+}
+
+function trackFbclid(track) {
+  return String(track && track.fbclid || '').trim();
+}
+
+// Ad-route Funnel Source. fbclid counts; _fbc does not. Meta traffic stays on the ad route.
+function funnelSource(track) {
+  const src = trackSource(track);
+  if (META_UTM.has(src) || trackFbclid(track)) return 'Meta';
+  if (src === 'linkedin') return 'LinkedIn';
+  if (src === 'google') return 'Google';
+  if (src === 'email') return 'Website';
+  return 'Other';
+}
+
+function sourceLabel(src) {
+  if (src === 'linkedin') return 'LinkedIn';
+  if (src === 'facebook' || src === 'fb') return 'Facebook';
+  if (src === 'instagram' || src === 'ig') return 'Instagram';
+  if (src === 'google') return 'Google';
+  if (src === 'email') return 'Email';
+  if (!src) return '';
+  return src.charAt(0).toUpperCase() + src.slice(1);
+}
+
+function mediumLabel(medium) {
+  const raw = String(medium || '').trim();
+  if (!raw) return '';
+  if (/^[a-z]{1,3}$/i.test(raw)) return raw.toUpperCase();
+  return raw.toLowerCase();
+}
+
+// When utm_campaign is absent, keep source and medium in Campaign Name. An explicit campaign wins.
+function adCampaign(guide, track) {
+  const t = track || {};
+  const explicit = String(t.campaign || '').trim();
+  if (explicit) return directCampaign(guide, explicit);
+  const channel = [sourceLabel(trackSource(t)), mediumLabel(t.medium)].filter(Boolean).join(' ');
+  return channel || directCampaign(guide, '');
+}
+
+function headerCookie(req, name) {
+  const headers = req && req.headers || {};
+  const raw = headers.cookie || headers.Cookie || '';
+  const match = String(raw).match(new RegExp('(?:^|;\\s*)' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+  if (!match) return '';
+  try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
+}
+
+// Lead and ConfirmedLead only. _fbc counts here; it does not change Funnel Source.
+function metaTraffic(track, fbc) {
+  return META_UTM.has(trackSource(track)) || !!trackFbclid(track) || !!String(fbc || '').trim();
+}
+
 // Airtable formula string literal. Escapes the value so it cannot break out of the quotes.
 function formulaString(value) {
   const escaped = String(value)
@@ -299,10 +362,10 @@ async function handler(req, res) {
         created = true;
         const fields = {
           [F.name]: joinName(b.first, b.last), [F.email]: email, [F.status]: 'New',
-          [F.source]: route === 'access' ? 'Meta' : 'Meta LP',
+          [F.source]: route === 'access' ? 'Meta' : funnelSource(t),
           [F.campaign]: route === 'access'
             ? (t.campaign || GUIDES[b.guide].campaignFallback)
-            : directCampaign(b.guide, t.campaign),
+            : adCampaign(b.guide, t),
           [F.adset]: t.adset || undefined, [F.adId]: t.adId || undefined, [F.platform]: t.platform || undefined,
           [F.consent]: consent
         };
@@ -369,8 +432,12 @@ async function handler(req, res) {
       if (!BANDS[b.band]) return res.json({ ok: false, error: 'band' });
       if (test) return res.json({ ok: true, test: true });
       const rec = await write(session.id, { [F.band]: BANDS[b.band].label });
-      b.eventId = b.eventId || crypto.randomUUID();
-      await capi(b, rec, req, route === 'access' ? 'ConfirmedLead' : 'Lead', BANDS[b.band].value);
+      const fbc = headerCookie(req, '_fbc') || b.fbc || '';
+      if (metaTraffic(b.track, fbc)) {
+        if (!b.fbc) b.fbc = fbc;
+        b.eventId = b.eventId || crypto.randomUUID();
+        await capi(b, rec, req, route === 'access' ? 'ConfirmedLead' : 'Lead', BANDS[b.band].value);
+      }
       await n8n({ step: 'band', route, recordId: rec.id, band: BANDS[b.band].label, value: BANDS[b.band].value });
       return res.json({ ok: true });
     }
@@ -384,6 +451,9 @@ async function handler(req, res) {
 
 handler.normPhone = normPhone;
 handler.directCampaign = directCampaign;
+handler.funnelSource = funnelSource;
+handler.adCampaign = adCampaign;
+handler.metaTraffic = metaTraffic;
 handler.emailFormula = emailFormula;
 handler.phoneFormula = phoneFormula;
 handler.formulaString = formulaString;

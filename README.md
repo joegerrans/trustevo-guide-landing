@@ -37,7 +37,7 @@ The steps are: name, email and consent, then mobile (with a Twilio check), then 
    | Self-Declared Band | Single select (the page creates the options) |
    | LP Consent | Long text (timestamp, page and the exact consent wording) |
 
-   "Meta LP" is added to Funnel Source automatically the first time a lead arrives from the ad route.
+   The ad route sets Funnel Source from the visit: Meta (Facebook, Instagram, fb, ig, or an fbclid), LinkedIn, Google, Website (email), or Other. It uses those existing options only.
 
 ## Meta setup
 
@@ -50,9 +50,9 @@ The steps are: name, email and consent, then mobile (with a Twilio check), then 
 
 | | Ad route | /access route |
 |---|---|---|
-| Step 1 | New lead: Full Name, Email, Lead Status New, Funnel Source "Meta LP", tracking fields, LP Consent | Finds the Meta form lead by email and adds LP Consent. If there's no match, it creates a new lead with Funnel Source "Meta" |
+| Step 1 | New lead: Full Name, Email, Lead Status New, Funnel Source from the visit, tracking fields, LP Consent. With no utm_campaign, Campaign Name is the source and medium, such as "LinkedIn post" | Finds the Meta form lead by email and adds LP Consent. If there's no match, it creates a new lead with Funnel Source "Meta" |
 | Step 2 | Phone and Valid Number? | Confirmed Phone, LP Confirmed and LP Confirmed At. The original Phone is left alone |
-| Step 3 | Self-Declared Band, plus a CAPI **Lead** event with a value | Self-Declared Band, plus a CAPI **ConfirmedLead** event with a value |
+| Step 3 | Self-Declared Band. A CAPI **Lead** event is sent only for Meta traffic (Facebook, Instagram, fb, ig, fbclid, or _fbc) | Self-Declared Band. A CAPI **ConfirmedLead** event uses the same Meta-traffic rule |
 
 ## Phone check
 

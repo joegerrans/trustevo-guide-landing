@@ -314,11 +314,15 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
 
   // tracking params from the ad link (set these as URL parameters in Ads Manager)
   var track = {
-    campaign: qs.get('utm_campaign')||'', adset: qs.get('utm_term')||qs.get('adset')||'',
+    campaign: qs.get('utm_campaign')||'', medium: qs.get('utm_medium')||'', adset: qs.get('utm_term')||qs.get('adset')||'',
     ad: qs.get('utm_content')||'', adId: qs.get('ad_id')||'', platform: qs.get('utm_source')||'',
     fbclid: qs.get('fbclid')||''
   };
   function fbc(){ var c=cookie('_fbc'); if(c) return c; return track.fbclid ? 'fb.1.'+Date.now()+'.'+track.fbclid : ''; }
+  function isMetaOrigin(){
+    var s=String(track.platform||'').trim().toLowerCase();
+    return s==='facebook'||s==='instagram'||s==='fb'||s==='ig'||!!String(track.fbclid||'').trim()||!!cookie('_fbc');
+  }
 
   // ---------- route copy ----------
   function applyRoute(){
@@ -334,12 +338,16 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
     !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
     fbq('init',CFG.pixelId); fbq('track','PageView');
   }
+  function maybePixel(){ if(isMetaOrigin()) loadPixel(); }
   var ck=store('te_ck');
-  if(ck==='yes') loadPixel(); else if(ck!=='no') $('ck').style.display='block';
-  $('cka').onclick=function(){store('te_ck','yes');$('ck').style.display='none';loadPixel()};
+  if(ck==='yes') maybePixel(); else if(ck!=='no') $('ck').style.display='block';
+  $('cka').onclick=function(){store('te_ck','yes');$('ck').style.display='none';maybePixel()};
   $('ckr').onclick=function(){store('te_ck','no');$('ck').style.display='none'};
   $('ckopen').onclick=function(e){e.preventDefault();$('ck').style.display='block'};
-  function px(name,params,eid){ if(pixelOn&&window.fbq){ if(name==='Lead') fbq('track','Lead',params,{eventID:eid}); else fbq('trackCustom',name,params,{eventID:eid}); } }
+  function px(name,params,eid){
+    if(!isMetaOrigin()) return;
+    if(pixelOn&&window.fbq){ if(name==='Lead') fbq('track','Lead',params,{eventID:eid}); else fbq('trackCustom',name,params,{eventID:eid}); }
+  }
 
   // ---------- api ----------
   function post(body){
