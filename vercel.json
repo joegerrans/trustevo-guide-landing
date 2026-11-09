@@ -2,8 +2,8 @@
   "outputDirectory": "public",
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/access", "destination": "/index.html" },
-    { "source": "/access/", "destination": "/index.html" }
+    { "source": "/access", "destination": "/" },
+    { "source": "/access/", "destination": "/" }
   ],
   "headers": [
     { "source": "/(.*)", "headers": [
