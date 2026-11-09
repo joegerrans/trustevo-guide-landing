@@ -307,12 +307,19 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
 
   var $ = function(id){return document.getElementById(id)};
   var qs = new URLSearchParams(location.search);
-  var route = (/\/access\/?$/.test(location.pathname) || qs.get('route')==='access') ? 'access' : 'ad';
   var demo = false, state = {recordId:null, sig:null, first:'', band:null};
 
   function store(k,v){try{ if(v===undefined) return localStorage.getItem(k); localStorage.setItem(k,v);}catch(e){return null}}
   function cookie(n){try{var m=document.cookie.match('(^|;)\\s*'+n+'=([^;]*)');return m?decodeURIComponent(m[2]):''}catch(e){return ''}}
   function uid(){return 'e'+Date.now().toString(36)+Math.random().toString(36).slice(2,9)}
+  function readVisit(){try{return JSON.parse(sessionStorage.getItem('te_visit')||'');}catch(e){return null}}
+  function saveVisit(v){try{sessionStorage.setItem('te_visit',JSON.stringify(v));}catch(e){}}
+
+  var hasQuery = location.search.length > 1;
+  var savedVisit = hasQuery ? null : readVisit();
+  var pathAccess = /\/access\/?$/.test(location.pathname);
+  var route = (pathAccess || (hasQuery && qs.get('route')==='access')) ? 'access' : 'ad';
+  if (!hasQuery && !pathAccess && savedVisit && (savedVisit.route==='access'||savedVisit.route==='ad')) route = savedVisit.route;
 
   // tracking params from the ad link (set these as URL parameters in Ads Manager)
   var track = {
@@ -320,7 +327,13 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
     ad: qs.get('utm_content')||'', adId: qs.get('ad_id')||'', platform: qs.get('utm_source')||'',
     fbclid: qs.get('fbclid')||''
   };
-  function fbc(){ var c=cookie('_fbc'); if(c) return c; return track.fbclid ? 'fb.1.'+Date.now()+'.'+track.fbclid : ''; }
+  if (!hasQuery && savedVisit && savedVisit.track) track = savedVisit.track;
+  var derivedFbc = (!hasQuery && savedVisit && savedVisit.fbc) ? savedVisit.fbc : '';
+  if (hasQuery && !cookie('_fbc') && track.fbclid) derivedFbc = 'fb.1.'+Date.now()+'.'+track.fbclid;
+  var landingUrl = (hasQuery || !(savedVisit && savedVisit.url)) ? location.href : savedVisit.url;
+  saveVisit({track:track, route:route, fbc:derivedFbc, url:landingUrl});
+  if (location.search) { try { history.replaceState(null, '', location.pathname + location.hash); } catch(e) {} }
+  function fbc(){ var c=cookie('_fbc'); if(c) return c; if(derivedFbc) return derivedFbc; return track.fbclid ? 'fb.1.'+Date.now()+'.'+track.fbclid : ''; }
   function isMetaOrigin(){
     var s=String(track.platform||'').trim().toLowerCase();
     return s==='facebook'||s==='instagram'||s==='fb'||s==='ig'||!!String(track.fbclid||'').trim()||!!cookie('_fbc');
@@ -354,7 +367,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
   // ---------- api ----------
   function post(body){
     body.route=route; body.guide=CFG.guide; body.recordId=state.recordId; body.sig=state.sig;
-    body.fbp=cookie('_fbp'); body.fbc=fbc(); body.url=location.href; body.track=track;
+    body.fbp=cookie('_fbp'); body.fbc=fbc(); body.url=landingUrl; body.track=track;
     if(demo) return Promise.resolve(fake(body));
     return fetch(CFG.api,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(function(r){ if(r.status===404||r.status===405) throw new Error('noapi'); return r.json(); })
