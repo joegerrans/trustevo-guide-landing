@@ -200,6 +200,115 @@ test('access start with no email match creates the record immediately', async ()
   assert.match(created['LP Consent'], /guide-wtp\/access/);
 });
 
+test('access email match treats gmail and googlemail as the same address', async () => {
+  const googlemail = installAirtable({
+    emailRecords: [{ id: 'recMETA', fields: { Email: 'rachelb3630@googlemail.com', 'Campaign Name': 'Instant form', 'Ad Set': 'Original ad set' } }]
+  });
+  const fromGmail = await post(startBody({
+    email: '  RachelB3630@Gmail.com ',
+    track: { campaign: 'WTP LP access test v1', adset: 'WTP LP access test v1 adset' }
+  }));
+  assert.equal(fromGmail.body.recordId, 'recMETA');
+  assert.match(googlemail[0].formula, /LOWER\(TRIM\(\{Email\}\)\)='rachelb3630@gmail\.com'/);
+  assert.match(googlemail[0].formula, /LOWER\(TRIM\(\{Email\}\)\)='rachelb3630@googlemail\.com'/);
+  assert.match(googlemail[0].formula, /^OR\(/);
+  const gmailPatch = googlemail.find((call) => call.method === 'PATCH');
+  assert.deepEqual(Object.keys(gmailPatch.body.fields), ['LP Consent']);
+  assert.equal(googlemail.some((call) => call.method === 'POST'), false);
+
+  const gmail = installAirtable({
+    emailRecords: [{ id: 'recGMAIL', fields: { Email: 'rachelb3630@gmail.com', 'Campaign Name': 'Keep' } }]
+  });
+  const fromGooglemail = await post(startBody({ email: 'rachelb3630@googlemail.com' }));
+  assert.equal(fromGooglemail.body.recordId, 'recGMAIL');
+  assert.match(gmail[0].formula, /rachelb3630@gmail\.com/);
+  assert.match(gmail[0].formula, /rachelb3630@googlemail\.com/);
+  assert.equal(gmail.some((call) => call.method === 'POST'), false);
+
+  const otherLocal = lead.emailFormula('rachelb3631@gmail.com');
+  assert.equal(otherLocal.includes('rachelb3630@gmail.com'), false);
+  const outlook = lead.emailFormula('rachelb3630@outlook.com');
+  assert.equal(outlook, "LOWER(TRIM({Email}))='rachelb3630@outlook.com'");
+  assert.equal(outlook.includes('gmail.com'), false);
+  const dotted = lead.emailFormula('rachel.b+tag@gmail.com');
+  assert.match(dotted, /rachel\.b\+tag@gmail\.com/);
+  assert.match(dotted, /rachel\.b\+tag@googlemail\.com/);
+  assert.equal(dotted.includes("'rachelb@gmail.com'"), false);
+  assert.equal(dotted.includes("'rachel.b@gmail.com'"), false);
+  assert.equal(lead.emailFormula('jane@example.com'), "LOWER(TRIM({Email}))='jane@example.com'");
+
+  const adDup = installAirtable({
+    emailRecords: [{ id: 'recOLD', fields: { Email: 'rachelb3630@googlemail.com' } }]
+  });
+  await post(startBody({ route: 'ad', email: 'rachelb3630@gmail.com', track: { platform: 'facebook' } }));
+  assert.match(adDup[0].formula, /rachelb3630@googlemail\.com/);
+  assert.equal(adDup.find((call) => call.method === 'POST').body.fields.Duplicate, true);
+  assert.equal(adDup.some((call) => call.method === 'PATCH'), false);
+});
+
+test('unmatched access records drop only the fixed test campaign labels', async () => {
+  const calls = installAirtable();
+  await post(startBody({
+    guide: 'wtp',
+    track: { campaign: 'WTP LP access test v1', adset: 'WTP LP access test v1 adset', ad: 'WTP form v1' }
+  }));
+  const created = calls.find((call) => call.method === 'POST').body.fields;
+  assert.equal(created['Campaign Name'], 'WTP Confirmed Route');
+  assert.equal(created['Ad Set'], 'WTP Confirmed Route');
+  assert.equal(created['Campaign Name'].includes('WTP'), true);
+  assert.equal(created['Campaign Name'].includes('45% Club'), false);
+  assert.equal(created.Email, 'jane@example.com');
+
+  const club = installAirtable();
+  await post(startBody({
+    guide: '45c',
+    email: 'club@example.com',
+    track: { campaign: '45C LP access test v1', adset: '45C LP access test v1 adset' }
+  }));
+  const clubCreated = club.find((call) => call.method === 'POST').body.fields;
+  assert.equal(clubCreated['Campaign Name'], '45% Club Confirmed Route');
+  assert.equal(clubCreated['Ad Set'], '45% Club Confirmed Route');
+  assert.equal(clubCreated['Campaign Name'].includes('45% Club'), true);
+
+  const named = installAirtable();
+  await post(startBody({
+    email: 'named@example.com',
+    track: { campaign: '45% Club LP access test v1', adset: '45% Club LP access test v1 adset' }
+  }));
+  const namedCreated = named.find((call) => call.method === 'POST').body.fields;
+  assert.equal(namedCreated['Campaign Name'], '45% Club Confirmed Route');
+  assert.equal(namedCreated['Ad Set'], '45% Club Confirmed Route');
+
+  const other = installAirtable();
+  await post(startBody({
+    email: 'other@example.com',
+    track: { campaign: 'Form Ad', adset: 'Broad' }
+  }));
+  const otherCreated = other.find((call) => call.method === 'POST').body.fields;
+  assert.equal(otherCreated['Campaign Name'], 'Form Ad');
+  assert.equal(otherCreated['Ad Set'], 'Broad');
+
+  const ad = installAirtable();
+  await post(startBody({
+    route: 'ad',
+    email: 'ad@example.com',
+    track: { campaign: 'WTP LP access test v1', adset: 'WTP LP access test v1 adset', platform: 'facebook' }
+  }));
+  const adCreated = ad.find((call) => call.method === 'POST').body.fields;
+  assert.equal(adCreated['Campaign Name'], 'WTP Direct | WTP LP access test v1');
+  assert.equal(adCreated['Ad Set'], 'WTP LP access test v1 adset');
+
+  const matched = installAirtable({
+    emailRecords: [{ id: 'recMETA', fields: { Email: 'jane@example.com', 'Campaign Name': 'Instant form', 'Ad Set': 'Original' } }]
+  });
+  const match = await post(startBody({
+    track: { campaign: 'WTP LP access test v1', adset: 'WTP LP access test v1 adset' }
+  }));
+  assert.equal(match.body.recordId, 'recMETA');
+  assert.deepEqual(Object.keys(matched.find((call) => call.method === 'PATCH').body.fields), ['LP Consent']);
+  assert.equal(matched.some((call) => call.method === 'POST'), false);
+});
+
 test('access no-match without a track campaign keeps the guide fallback', async () => {
   const calls = installAirtable();
   await post(startBody({ guide: '45c' }));

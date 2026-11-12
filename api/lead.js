@@ -167,7 +167,42 @@ function metaWindow(selfId) {
 }
 
 function emailFormula(email) {
-  return `LOWER(TRIM({${F.email}}))=${formulaString(String(email || '').trim().toLowerCase())}`;
+  const cleaned = String(email || '').trim().toLowerCase();
+  const at = cleaned.lastIndexOf('@');
+  const local = at > 0 ? cleaned.slice(0, at) : '';
+  const domain = at > 0 ? cleaned.slice(at + 1) : '';
+  const values = (domain === 'gmail.com' || domain === 'googlemail.com')
+    ? [`${local}@gmail.com`, `${local}@googlemail.com`]
+    : [cleaned];
+  const checks = values.map((value) => `LOWER(TRIM({${F.email}}))=${formulaString(value)}`);
+  return checks.length === 1 ? checks[0] : `OR(${checks.join(',')})`;
+}
+
+// Only the fixed Meta completion-screen labels. Every other campaign and ad set is stored as sent.
+const ACCESS_LABELS = {
+  'WTP LP access test v1': 'WTP Confirmed Route',
+  'WTP LP access test v1 adset': 'WTP Confirmed Route',
+  '45C LP access test v1': '45% Club Confirmed Route',
+  '45C LP access test v1 adset': '45% Club Confirmed Route',
+  '45% Club LP access test v1': '45% Club Confirmed Route',
+  '45% Club LP access test v1 adset': '45% Club Confirmed Route'
+};
+
+function accessLabel(value) {
+  const raw = String(value == null ? '' : value);
+  return ACCESS_LABELS[raw.trim()] || raw;
+}
+
+function accessCampaign(guide, campaign) {
+  const raw = String(campaign || '');
+  if (!raw.trim()) return GUIDES[guide].campaignFallback;
+  return accessLabel(raw);
+}
+
+function accessAdset(adset) {
+  const raw = String(adset || '');
+  if (!raw.trim()) return undefined;
+  return accessLabel(raw);
 }
 
 function strippedPhoneExpr() {
@@ -364,9 +399,9 @@ async function handler(req, res) {
           [F.name]: joinName(b.first, b.last), [F.email]: email, [F.status]: 'New',
           [F.source]: route === 'access' ? 'Meta' : funnelSource(t),
           [F.campaign]: route === 'access'
-            ? (t.campaign || GUIDES[b.guide].campaignFallback)
+            ? accessCampaign(b.guide, t.campaign)
             : adCampaign(b.guide, t),
-          [F.adset]: t.adset || undefined, [F.adId]: t.adId || undefined, [F.platform]: t.platform || undefined,
+          [F.adset]: route === 'access' ? accessAdset(t.adset) : (t.adset || undefined), [F.adId]: t.adId || undefined, [F.platform]: t.platform || undefined,
           [F.consent]: consent
         };
         if (emailDuplicate) fields[F.duplicate] = true;
@@ -455,6 +490,8 @@ handler.funnelSource = funnelSource;
 handler.adCampaign = adCampaign;
 handler.metaTraffic = metaTraffic;
 handler.emailFormula = emailFormula;
+handler.accessCampaign = accessCampaign;
+handler.accessAdset = accessAdset;
 handler.phoneFormula = phoneFormula;
 handler.formulaString = formulaString;
 handler.sign = sign;
