@@ -381,6 +381,57 @@ test('phone and confirmed phone are stored as E.164 and a new access lead is kep
   assert.equal(calls.some((call) => call.method === 'DELETE'), false);
 });
 
+test('the Meta phone window uses a JS cutoff and Phone Clean', () => {
+  const before = Date.now();
+  const formula = lead.phoneFormula('+447759885561', 'recMy6r8rwBBdVHJN');
+  const after = Date.now();
+  assert.equal(formula.includes('DATETIME_DIFF(NOW()'), false);
+  assert.match(formula, /\{Funnel Source\}='Meta'/);
+  assert.match(formula, /RECORD_ID\(\)!='recMy6r8rwBBdVHJN'/);
+  assert.match(formula, /\{Phone Clean\}='\+447759885561'/);
+  const parsed = /IS_AFTER\(\{Date Captured\}, DATETIME_PARSE\('([^']+)'\)\)/.exec(formula);
+  assert.ok(parsed, formula);
+  const cutoff = Date.parse(parsed[1]);
+  assert.ok(cutoff >= before - 120 * 60 * 1000 && cutoff <= after - 120 * 60 * 1000, parsed[1]);
+});
+
+test('a matched Meta phone is confirmed on that record, not the new access record', async () => {
+  const calls = installAirtable({
+    phoneRecords: [{ id: 'recx87tiOyU4QGHdx', fields: { Phone: '+447759885561', 'Funnel Source': 'Meta' } }],
+    recordFields: {
+      recNEW: { 'LP Consent': `2026-11-12T12:38:20.592Z | guide-wtp/access | ${CONSENT}` }
+    },
+    noteStatus: 200
+  });
+  const start = await post(startBody({ email: 'anthonybetts246@outlook.com' }));
+  const phone = await post({
+    action: 'phone', route: 'access', guide: 'wtp', phone: '07759885561',
+    recordId: start.body.recordId, sig: start.body.sig
+  });
+  assert.equal(phone.body.ok, true);
+  assert.equal(phone.body.recordId, 'recx87tiOyU4QGHdx');
+  const confirmed = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recx87tiOyU4QGHdx');
+  assert.equal(confirmed.body.fields['Confirmed Phone'], '+447759885561');
+  assert.equal(confirmed.body.fields['LP Confirmed'], true);
+  assert.match(confirmed.body.fields['LP Confirmed At'], /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(confirmed.body.fields['LP Consent'], `2026-11-12T12:38:20.592Z | guide-wtp/access | ${CONSENT}`);
+  const selfWrites = calls.filter((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
+  assert.equal(selfWrites.some((call) => call.body.fields['LP Confirmed'] === true), false);
+
+  const miss = installAirtable({
+    recordFields: { recNEW: { 'LP Consent': 'stored consent' } }
+  });
+  const missStart = await post(startBody({ email: 'nobody@outlook.com' }));
+  const missPhone = await post({
+    action: 'phone', route: 'access', guide: 'wtp', phone: '07759885561',
+    recordId: missStart.body.recordId, sig: missStart.body.sig
+  });
+  assert.equal(missPhone.body.recordId, 'recNEW');
+  const self = miss.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
+  assert.equal(self.body.fields['LP Confirmed'], true);
+  assert.equal(self.body.fields['Confirmed Phone'], '+447759885561');
+});
+
 test('a new access lead adopts a recent Meta phone match and the next step uses that record', async () => {
   const calls = installAirtable({
     phoneRecords: [{ id: 'recPHONE', fields: { Phone: '+447700900123', 'Funnel Source': 'Meta', 'Campaign Name': 'Keep Me' } }],
@@ -406,7 +457,7 @@ test('a new access lead adopts a recent Meta phone match and the next step uses 
   const phoneGet = calls.find((call) => call.formula && call.formula.includes('{Phone}'));
   assert.match(phoneGet.formula, /\+447700900123/);
   assert.match(phoneGet.formula, /\{Funnel Source\}='Meta'/);
-  assert.match(phoneGet.formula, /<=120/);
+  assert.match(phoneGet.formula, /IS_AFTER\(\{Date Captured\}, DATETIME_PARSE\(/);
   assert.match(phoneGet.formula, /RECORD_ID\(\)!='recNEW'/);
   const confirmed = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recPHONE');
   assert.equal(confirmed.body.fields['Confirmed Phone'], '+447700900123');

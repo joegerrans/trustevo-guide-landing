@@ -157,10 +157,10 @@ function formulaString(value) {
 }
 
 function metaWindow(selfId) {
+  const cutoff = new Date(Date.now() - 120 * 60 * 1000).toISOString();
   const parts = [
     `{${F.source}}='Meta'`,
-    `DATETIME_DIFF(NOW(),{Date Captured},'minutes')>=0`,
-    `DATETIME_DIFF(NOW(),{Date Captured},'minutes')<=120`
+    `IS_AFTER({Date Captured}, DATETIME_PARSE(${formulaString(cutoff)}))`
   ];
   if (selfId) parts.push(`RECORD_ID()!=${formulaString(selfId)}`);
   return parts.join(',');
@@ -221,7 +221,7 @@ function phoneFormula(e164, selfId) {
   const stripped = strippedPhoneExpr();
   const ors = phoneVariants(e164).map((v) => {
     const lit = formulaString(v);
-    return `OR({${F.phone}}=${lit},${stripped}=${lit})`;
+    return `OR({${F.phone}}=${lit},{Phone Clean}=${lit},${stripped}=${lit})`;
   }).join(',');
   return `AND(${metaWindow(selfId)},OR(${ors}))`;
 }
