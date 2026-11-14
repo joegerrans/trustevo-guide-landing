@@ -40,8 +40,14 @@ const F = {
   source: 'Funnel Source', campaign: 'Campaign Name', adset: 'Ad Set', adId: 'Meta Ad ID', platform: 'Platform',
   // new
   confirmed: 'LP Confirmed', confirmedAt: 'LP Confirmed At', confirmedPhone: 'Confirmed Phone',
-  band: 'Self-Declared Band', consent: 'LP Consent', duplicate: 'Duplicate'
+  band: 'Self-Declared Band', consent: 'LP Consent', duplicate: 'Duplicate',
+  // single line text (Airtable fldlPmH1zaMbjfbiu): email typed on /access when it differs
+  // from the Meta form email. The typed email is also kept at the end of LP Consent.
+  lpEmail: 'LP Email'
 };
+// An /access visitor whose email doesn't match is linked to a Meta lead with the
+// exact same full name captured in the last NAME_MATCH_MINUTES.
+const NAME_MATCH_MINUTES = 10;
 const CONSENT_TEXT = 'I understand I will receive this guide and ongoing insights from TrustEvo by email, phone or SMS. You can opt out anytime.';
 
 const sha = (v) => crypto.createHash('sha256').update(String(v).trim().toLowerCase()).digest('hex');
@@ -299,6 +305,36 @@ async function findByEmail(email) {
   return j.records && j.records[0];
 }
 
+function normName(v) {
+  return String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Exact full name (case-insensitive, trimmed), Meta instant-form lead only, last 10 minutes.
+function nameFormula(fullName) {
+  const cutoff = new Date(Date.now() - NAME_MATCH_MINUTES * 60 * 1000).toISOString();
+  return `AND({${F.source}}='Meta',{Meta Leadgen ID}!='',` +
+    `IS_AFTER({Date Captured}, DATETIME_PARSE(${formulaString(cutoff)})),` +
+    `LOWER(TRIM({${F.name}}))=${formulaString(normName(fullName))})`;
+}
+
+async function findRecentMetaByName(fullName) {
+  if (!normName(fullName)) return null;
+  const j = await at('GET', listQuery(nameFormula(fullName)));
+  return j.records && j.records[0];
+}
+
+function sameEmail(a, b) {
+  const n = (v) => String(v || '').trim().toLowerCase().replace(/@googlemail\.com$/, '@gmail.com');
+  return n(a) === n(b);
+}
+
+// Keep a different typed email without overwriting Email: LP Email (if the field exists)
+// plus a suffix on LP Consent. The suffix sits after the marker, so the n8n FIND() still works.
+function typedEmailFields(consent, typed, storedEmail) {
+  if (!typed || sameEmail(typed, storedEmail)) return { [F.consent]: consent };
+  return { [F.consent]: `${consent} | typed email: ${typed}`, [F.lpEmail]: typed };
+}
+
 async function findRecentMetaByPhone(e164, selfId) {
   const j = await at('GET', listQuery(phoneFormula(e164, selfId)));
   return j.records && j.records[0];
@@ -389,10 +425,15 @@ async function handler(req, res) {
         try { emailDuplicate = !!(await findByEmail(email)); } catch (e) { emailDuplicate = false; }
       }
       let rec = route === 'access' ? await findByEmail(email) : null;
+      // No email match: an exact-name Meta lead from the last 10 minutes is the same person.
+      if (!rec && route === 'access') {
+        try { rec = await findRecentMetaByName(joinName(b.first, b.last)); } catch (e) { rec = null; }
+      }
       let created = false;
       if (rec) {
-        // Meta form lead found: keep its name, source and campaign, just add consent
-        rec = await write(rec.id, { [F.consent]: consent });
+        // Meta form lead found: keep its name, email, source and campaign, just add consent
+        const storedEmail = rec.fields && rec.fields[F.email];
+        rec = await write(rec.id, typedEmailFields(consent, email, storedEmail));
       } else {
         created = true;
         const fields = {
@@ -435,8 +476,11 @@ async function handler(req, res) {
             [F.confirmedAt]: new Date().toISOString()
           };
           const storedConsent = current.fields && current.fields[F.consent];
-          if (storedConsent) fields[F.consent] = storedConsent;
+          const typed = current.fields && current.fields[F.email];
+          if (storedConsent) Object.assign(fields, typedEmailFields(storedConsent, typed, hit.fields && hit.fields[F.email]));
           await write(hit.id, fields);
+          // The step-1 record can't be deleted. Tick Duplicate so it is filtered out of calling.
+          await write(session.id, { [F.duplicate]: true });
           await writeMergeNote(session.id, hit.id);
           targetId = hit.id;
         } else {
@@ -497,6 +541,8 @@ handler.formulaString = formulaString;
 handler.sign = sign;
 handler.signNew = signNew;
 handler.joinName = joinName;
+handler.nameFormula = nameFormula;
+handler.typedEmailFields = typedEmailFields;
 handler.NOTE_FIELDS = NOTE_FIELDS;
 handler.resetNoteFieldCache = resetNoteFieldCache;
 module.exports = handler;

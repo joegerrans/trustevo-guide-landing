@@ -130,8 +130,25 @@ test('normPhone writes UK mobiles as +447 E.164', () => {
   assert.equal(lead.normPhone(''), null);
 });
 
-test('matching does not use a name formula', () => {
-  assert.equal(lead.nameFormula, undefined);
+test('phone matching does not use a name formula', () => {
+  const before = Date.now();
+  const formula = lead.nameFormula("  Jane   O'Brien ");
+  const after = Date.now();
+  assert.match(formula, /\{Funnel Source\}='Meta'/);
+  assert.match(formula, /\{Meta Leadgen ID\}!=''/);
+  assert.match(formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane o\\'brien'/);
+  const parsed = /IS_AFTER\(\{Date Captured\}, DATETIME_PARSE\('([^']+)'\)\)/.exec(formula);
+  assert.ok(parsed, formula);
+  const cutoff = Date.parse(parsed[1]);
+  assert.ok(cutoff >= before - 10 * 60 * 1000 && cutoff <= after - 10 * 60 * 1000, parsed[1]);
+  assert.deepEqual(
+    lead.typedEmailFields('consent', 'jane@gmail.com', 'jane@googlemail.com'),
+    { 'LP Consent': 'consent' }
+  );
+  assert.deepEqual(
+    lead.typedEmailFields('consent', 'other@example.com', 'jane@example.com'),
+    { 'LP Consent': 'consent | typed email: other@example.com', 'LP Email': 'other@example.com' }
+  );
   const phone = lead.phoneFormula('+447700900123', 'recNEW');
   assert.equal(phone.includes('Full Name'), false);
   assert.match(phone, /\{Phone\}/);
@@ -176,9 +193,11 @@ test('access start uses an email match and leaves name, source and campaign unto
   assert.equal(calls[0].formula.includes('{Phone}'), false);
   assert.equal(calls[0].formula.includes('Full Name'), false);
   const patch = calls.find((call) => call.method === 'PATCH');
-  assert.deepEqual(Object.keys(patch.body.fields), ['LP Consent']);
+  assert.deepEqual(Object.keys(patch.body.fields), ['LP Consent', 'LP Email']);
+  assert.equal(patch.body.fields['LP Email'], "o'brien@example.com");
   assert.match(patch.body.fields['LP Consent'], /guide-wtp\/access \| /);
   assert.match(patch.body.fields['LP Consent'], new RegExp(CONSENT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(patch.body.fields['LP Consent'], /\| typed email: o'brien@example.com$/);
   assert.equal(calls.some((call) => call.method === 'POST' || call.method === 'DELETE'), false);
 });
 
@@ -187,9 +206,11 @@ test('access start with no email match creates the record immediately', async ()
   const res = await post(startBody({ first: ' Jane ', last: ' Doe ', track: { campaign: 'Form Ad', adset: 'Broad' } }));
   assert.equal(res.body.recordId, 'recNEW');
   assert.equal(res.body.sig, lead.signNew('recNEW'));
-  assert.equal(calls.filter((call) => call.method === 'GET').length, 1);
+  assert.equal(calls.filter((call) => call.method === 'GET').length, 2);
   assert.equal(calls[0].formula.includes('{Phone}'), false);
   assert.equal(calls[0].formula.includes('Full Name'), false);
+  assert.match(calls[1].formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane doe'/);
+  assert.match(calls[1].formula, /\{Meta Leadgen ID\}!=''/);
   const created = calls.find((call) => call.method === 'POST').body.fields;
   assert.equal(created['Full Name'], 'Jane Doe');
   assert.equal(created.Email, 'jane@example.com');
@@ -372,7 +393,7 @@ test('phone and confirmed phone are stored as E.164 and a new access lead is kep
   const kinds = calls.filter((call) => call.formula).map((call) => (
     call.formula.includes('{Phone}') ? 'phone' : call.formula.includes('{Full Name}') ? 'name' : 'email'
   ));
-  assert.deepEqual(kinds, ['email', 'phone']);
+  assert.deepEqual(kinds, ['email', 'name', 'phone']);
   const patch = calls.find((call) => call.method === 'PATCH');
   assert.equal(patch.recordId, 'recNEW');
   assert.equal(patch.body.fields['Confirmed Phone'], '+447700900123');
@@ -453,7 +474,9 @@ test('a new access lead adopts a recent Meta phone match and the next step uses 
   assert.equal(phone.body.ok, true);
   assert.equal(phone.body.recordId, 'recPHONE');
   assert.equal(phone.body.sig, lead.sign('recPHONE'));
-  assert.equal(calls.some((call) => call.formula && call.formula.includes('{Full Name}')), false);
+  const nameGets = calls.filter((call) => call.formula && call.formula.includes('{Full Name}'));
+  assert.equal(nameGets.length, 1);
+  assert.match(nameGets[0].formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane doe'/);
   const phoneGet = calls.find((call) => call.formula && call.formula.includes('{Phone}'));
   assert.match(phoneGet.formula, /\+447700900123/);
   assert.match(phoneGet.formula, /\{Funnel Source\}='Meta'/);
@@ -466,7 +489,9 @@ test('a new access lead adopts a recent Meta phone match and the next step uses 
   for (const key of ['Full Name', 'Funnel Source', 'Campaign Name', 'Lead Status', 'Phone']) {
     assert.equal(confirmed.body.fields[key], undefined, key);
   }
-  const note = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
+  const dup = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW' && call.body.fields.Duplicate);
+  assert.deepEqual(dup.body.fields, { Duplicate: true });
+  const note = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW' && call.body.fields.Notes);
   assert.deepEqual(note.body.fields, { Notes: 'Merged into recPHONE' });
   assert.equal(calls.some((call) => call.method === 'DELETE'), false);
 
@@ -480,21 +505,31 @@ test('a new access lead adopts a recent Meta phone match and the next step uses 
   assert.equal(bandPatch.body.fields['Self-Declared Band'], '£100,000 to £250,000');
 });
 
-test('a phone miss does not match by name and keeps the new access record', async () => {
+test('an access start with no email match links an exact-name Meta lead', async () => {
   const calls = installAirtable({
     nameRecords: [{ id: 'recNAME', fields: { 'Full Name': 'jane DOE', 'Funnel Source': 'Meta' } }],
     recordFields: { recNEW: { 'Full Name': 'jane DOE', 'LP Consent': 'stored consent' } }
   });
   const start = await post(startBody({ first: 'jane', last: 'DOE' }));
+  assert.equal(start.body.recordId, 'recNAME');
+  assert.equal(start.body.sig, lead.sign('recNAME'));
+  assert.equal(calls.some((call) => call.method === 'POST'), false);
+  const nameGets = calls.filter((call) => call.formula && call.formula.includes('{Full Name}'));
+  assert.equal(nameGets.length, 1);
+  assert.match(nameGets[0].formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane doe'/);
+  const linked = calls.find((call) => call.method === 'PATCH');
+  assert.equal(linked.recordId, 'recNAME');
+  assert.equal(linked.body.fields['LP Email'], 'jane@example.com');
+  assert.match(linked.body.fields['LP Consent'], /typed email: jane@example.com$/);
   const phone = await post({
     action: 'phone', route: 'access', guide: 'wtp', phone: '+447700900123',
     recordId: start.body.recordId, sig: start.body.sig
   });
-  assert.equal(phone.body.recordId, 'recNEW');
-  assert.equal(calls.some((call) => call.formula && call.formula.includes('Full Name')), false);
-  const confirmed = calls.find((call) => call.method === 'PATCH');
-  assert.equal(confirmed.recordId, 'recNEW');
+  assert.equal(phone.body.recordId, 'recNAME');
+  const confirmed = calls.find((call) => call.method === 'PATCH' && call.body.fields['Confirmed Phone']);
+  assert.equal(confirmed.recordId, 'recNAME');
   assert.equal(confirmed.body.fields['Confirmed Phone'], '+447700900123');
+  assert.equal(calls.filter((call) => call.formula && call.formula.includes('{Full Name}')).length, 1);
 });
 
 test('the combined band is accepted and the old splits are not', async () => {
@@ -545,7 +580,9 @@ test('an email match is not merged again by phone, and a missing notes field doe
   assert.equal(moved.statusCode, 200);
   assert.equal(moved.body.ok, true);
   assert.equal(moved.body.recordId, 'recPHONE');
-  const noteAttempts = mergeCalls.filter((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
+  const step1Writes = mergeCalls.filter((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
+  assert.deepEqual(step1Writes[0].body.fields, { Duplicate: true });
+  const noteAttempts = step1Writes.slice(1);
   assert.equal(noteAttempts.length, lead.NOTE_FIELDS.length);
   for (const attempt of noteAttempts) {
     assert.equal(attempt.body.fields['Lead Status'], undefined);
