@@ -48,13 +48,14 @@ function installAirtable(opts = {}) {
   const emailRecords = opts.emailRecords || [];
   const phoneRecords = opts.phoneRecords || [];
   const nameRecords = opts.nameRecords || [];
+  const anyNameRecords = opts.anyNameRecords || [];
   const recordFields = opts.recordFields || {};
   const noteStatus = opts.noteStatus == null ? 422 : opts.noteStatus;
   const calls = [];
   global.fetch = async (url, init = {}) => {
     const call = parseCall(url, init);
     calls.push(call);
-    if (String(url).includes('graph.facebook.com')) {
+    if (String(url).includes('graph.facebook.com') || String(url).includes('n8n.example')) {
       return { ok: true, status: 200, json: async () => ({ events_received: 1 }) };
     }
     if (call.method === 'DELETE') throw new Error('refusing to delete');
@@ -64,9 +65,11 @@ function installAirtable(opts = {}) {
       assert.equal(call.maxRecords, '1');
       assert.equal(call.sortField, 'Date Captured');
       assert.equal(call.sortDir, 'desc');
-      if (call.formula.includes('{Email}')) json = { records: emailRecords };
-      else if (call.formula.includes('{Phone}')) json = { records: phoneRecords };
-      else if (call.formula.includes('{Full Name}')) json = { records: nameRecords };
+      const recentName = call.formula.includes('{Full Name}') && call.formula.includes('{Meta Leadgen ID}');
+      if (recentName) json = { records: nameRecords };
+      else if (call.formula.includes('{Full Name}')) json = { records: anyNameRecords };
+      else if (call.formula.includes('{Phone}') || call.formula.includes('{Confirmed Phone}') || call.formula.includes('{Phone Clean}')) json = { records: phoneRecords };
+      else if (call.formula.includes('{Email}') || call.formula.includes('{LP Email}')) json = { records: emailRecords };
       else throw new Error(`unexpected formula ${call.formula}`);
     } else if (call.method === 'GET' && call.recordId) {
       json = { id: call.recordId, fields: recordFields[call.recordId] || {} };
@@ -136,7 +139,11 @@ test('phone matching does not use a name formula', () => {
   const after = Date.now();
   assert.match(formula, /\{Funnel Source\}='Meta'/);
   assert.match(formula, /\{Meta Leadgen ID\}!=''/);
-  assert.match(formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane o\\'brien'/);
+  assert.match(formula, /FIND\('@'/);
+  assert.match(formula, /='jane o\\'brien'/);
+  assert.equal(lead.nameForMatch('  Jane   O\'Brien '), "jane o'brien");
+  assert.equal(lead.nameForMatch('Jane Doe@gmail.com'), 'jane doe');
+  assert.equal(lead.nameForMatch('Jane Doe jane@example.com'), 'jane doe jane');
   const parsed = /IS_AFTER\(\{Date Captured\}, DATETIME_PARSE\('([^']+)'\)\)/.exec(formula);
   assert.ok(parsed, formula);
   const cutoff = Date.parse(parsed[1]);
@@ -168,8 +175,12 @@ test('formula values cannot break out of the string literal', () => {
 });
 
 test('email formula keeps the existing most-recent email match and direct campaigns are labelled', () => {
-  assert.equal(lead.emailFormula(" o'brien@example.com "), "LOWER(TRIM({Email}))='o\\'brien@example.com'");
+  assert.equal(
+    lead.emailFormula(" o'brien@example.com "),
+    "OR(LOWER(TRIM({Email}))='o\\'brien@example.com',LOWER(TRIM({LP Email}))='o\\'brien@example.com')"
+  );
   assert.equal(lead.emailFormula('jane@example.com').includes('Funnel Source'), false);
+  assert.equal(lead.emailFormula('jane@example.com').includes('IS_AFTER'), false);
   assert.equal(lead.directCampaign('wtp', ''), 'WTP Direct');
   assert.equal(lead.directCampaign('wtp', '   '), 'WTP Direct');
   assert.equal(lead.directCampaign('wtp', ' Spring Sale '), 'WTP Direct | Spring Sale');
@@ -201,24 +212,25 @@ test('access start uses an email match and leaves name, source and campaign unto
   assert.equal(calls.some((call) => call.method === 'POST' || call.method === 'DELETE'), false);
 });
 
-test('access start with no email match creates the record immediately', async () => {
+test('access start with no email or name match creates nothing yet', async () => {
   const calls = installAirtable();
   const res = await post(startBody({ first: ' Jane ', last: ' Doe ', track: { campaign: 'Form Ad', adset: 'Broad' } }));
-  assert.equal(res.body.recordId, 'recNEW');
-  assert.equal(res.body.sig, lead.signNew('recNEW'));
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.recordId, null);
+  const pending = lead.readPending(res.body.sig);
+  assert.equal(pending.email, 'jane@example.com');
+  assert.equal(pending.first, 'Jane');
+  assert.equal(pending.last, 'Doe');
+  assert.equal(pending.track.campaign, 'Form Ad');
+  assert.equal(pending.track.adset, 'Broad');
   assert.equal(calls.filter((call) => call.method === 'GET').length, 2);
   assert.equal(calls[0].formula.includes('{Phone}'), false);
   assert.equal(calls[0].formula.includes('Full Name'), false);
-  assert.match(calls[1].formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane doe'/);
+  assert.match(calls[0].formula, /\{LP Email\}/);
+  assert.equal(calls[0].formula.includes('IS_AFTER'), false);
+  assert.match(calls[1].formula, /='jane doe'/);
   assert.match(calls[1].formula, /\{Meta Leadgen ID\}!=''/);
-  const created = calls.find((call) => call.method === 'POST').body.fields;
-  assert.equal(created['Full Name'], 'Jane Doe');
-  assert.equal(created.Email, 'jane@example.com');
-  assert.equal(created['Lead Status'], 'New');
-  assert.equal(created['Funnel Source'], 'Meta');
-  assert.equal(created['Campaign Name'], 'Form Ad');
-  assert.equal(created['Ad Set'], 'Broad');
-  assert.match(created['LP Consent'], /guide-wtp\/access/);
+  assert.equal(calls.some((call) => call.method === 'POST' || call.method === 'PATCH' || call.method === 'DELETE'), false);
 });
 
 test('access email match treats gmail and googlemail as the same address', async () => {
@@ -232,6 +244,9 @@ test('access email match treats gmail and googlemail as the same address', async
   assert.equal(fromGmail.body.recordId, 'recMETA');
   assert.match(googlemail[0].formula, /LOWER\(TRIM\(\{Email\}\)\)='rachelb3630@gmail\.com'/);
   assert.match(googlemail[0].formula, /LOWER\(TRIM\(\{Email\}\)\)='rachelb3630@googlemail\.com'/);
+  assert.match(googlemail[0].formula, /LOWER\(TRIM\(\{LP Email\}\)\)='rachelb3630@gmail\.com'/);
+  assert.match(googlemail[0].formula, /LOWER\(TRIM\(\{LP Email\}\)\)='rachelb3630@googlemail\.com'/);
+  assert.equal(googlemail[0].formula.includes('IS_AFTER'), false);
   assert.match(googlemail[0].formula, /^OR\(/);
   const gmailPatch = googlemail.find((call) => call.method === 'PATCH');
   assert.deepEqual(Object.keys(gmailPatch.body.fields), ['LP Consent']);
@@ -249,14 +264,20 @@ test('access email match treats gmail and googlemail as the same address', async
   const otherLocal = lead.emailFormula('rachelb3631@gmail.com');
   assert.equal(otherLocal.includes('rachelb3630@gmail.com'), false);
   const outlook = lead.emailFormula('rachelb3630@outlook.com');
-  assert.equal(outlook, "LOWER(TRIM({Email}))='rachelb3630@outlook.com'");
+  assert.equal(
+    outlook,
+    "OR(LOWER(TRIM({Email}))='rachelb3630@outlook.com',LOWER(TRIM({LP Email}))='rachelb3630@outlook.com')"
+  );
   assert.equal(outlook.includes('gmail.com'), false);
   const dotted = lead.emailFormula('rachel.b+tag@gmail.com');
   assert.match(dotted, /rachel\.b\+tag@gmail\.com/);
   assert.match(dotted, /rachel\.b\+tag@googlemail\.com/);
   assert.equal(dotted.includes("'rachelb@gmail.com'"), false);
   assert.equal(dotted.includes("'rachel.b@gmail.com'"), false);
-  assert.equal(lead.emailFormula('jane@example.com'), "LOWER(TRIM({Email}))='jane@example.com'");
+  assert.equal(
+    lead.emailFormula('jane@example.com'),
+    "OR(LOWER(TRIM({Email}))='jane@example.com',LOWER(TRIM({LP Email}))='jane@example.com')"
+  );
 
   const adDup = installAirtable({
     emailRecords: [{ id: 'recOLD', fields: { Email: 'rachelb3630@googlemail.com' } }]
@@ -267,47 +288,68 @@ test('access email match treats gmail and googlemail as the same address', async
   assert.equal(adDup.some((call) => call.method === 'PATCH'), false);
 });
 
+async function confirmAccess(start, guide) {
+  return post({
+    action: 'phone',
+    route: 'access',
+    guide: guide || 'wtp',
+    phone: '07700900123',
+    recordId: start.body.recordId,
+    sig: start.body.sig
+  });
+}
+
 test('unmatched access records drop only the fixed test campaign labels', async () => {
   const calls = installAirtable();
-  await post(startBody({
+  const start = await post(startBody({
     guide: 'wtp',
     track: { campaign: 'WTP LP access test v1', adset: 'WTP LP access test v1 adset', ad: 'WTP form v1' }
   }));
+  assert.equal(start.body.recordId, null);
+  await confirmAccess(start, 'wtp');
   const created = calls.find((call) => call.method === 'POST').body.fields;
   assert.equal(created['Campaign Name'], 'WTP Confirmed Route');
   assert.equal(created['Ad Set'], 'WTP Confirmed Route');
   assert.equal(created['Campaign Name'].includes('WTP'), true);
   assert.equal(created['Campaign Name'].includes('45% Club'), false);
   assert.equal(created.Email, 'jane@example.com');
+  assert.equal(created['Confirmed Phone'], '+447700900123');
+  assert.equal(created['Funnel Source'], 'Other');
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
 
   const club = installAirtable();
-  await post(startBody({
+  const clubStart = await post(startBody({
     guide: '45c',
     email: 'club@example.com',
     track: { campaign: '45C LP access test v1', adset: '45C LP access test v1 adset' }
   }));
+  await confirmAccess(clubStart, '45c');
   const clubCreated = club.find((call) => call.method === 'POST').body.fields;
   assert.equal(clubCreated['Campaign Name'], '45% Club Confirmed Route');
   assert.equal(clubCreated['Ad Set'], '45% Club Confirmed Route');
   assert.equal(clubCreated['Campaign Name'].includes('45% Club'), true);
+  assert.equal(clubCreated['Funnel Source'], 'Other');
 
   const named = installAirtable();
-  await post(startBody({
+  const namedStart = await post(startBody({
     email: 'named@example.com',
     track: { campaign: '45% Club LP access test v1', adset: '45% Club LP access test v1 adset' }
   }));
+  await confirmAccess(namedStart);
   const namedCreated = named.find((call) => call.method === 'POST').body.fields;
   assert.equal(namedCreated['Campaign Name'], '45% Club Confirmed Route');
   assert.equal(namedCreated['Ad Set'], '45% Club Confirmed Route');
 
   const other = installAirtable();
-  await post(startBody({
+  const otherStart = await post(startBody({
     email: 'other@example.com',
     track: { campaign: 'Form Ad', adset: 'Broad' }
   }));
+  await confirmAccess(otherStart);
   const otherCreated = other.find((call) => call.method === 'POST').body.fields;
   assert.equal(otherCreated['Campaign Name'], 'Form Ad');
   assert.equal(otherCreated['Ad Set'], 'Broad');
+  assert.equal(otherCreated['Funnel Source'], 'Other');
 
   const ad = installAirtable();
   await post(startBody({
@@ -332,11 +374,15 @@ test('unmatched access records drop only the fixed test campaign labels', async 
 
 test('access no-match without a track campaign keeps the guide fallback', async () => {
   const calls = installAirtable();
-  await post(startBody({ guide: '45c' }));
+  const start = await post(startBody({ guide: '45c' }));
+  assert.equal(start.body.recordId, null);
+  await confirmAccess(start, '45c');
   const created = calls.find((call) => call.method === 'POST').body.fields;
   assert.equal(created['Campaign Name'], 'Landing Page - The 45% Club');
-  assert.equal(created['Funnel Source'], 'Meta');
+  assert.equal(created['Funnel Source'], 'Other');
   assert.equal(created['Campaign Name'].includes('Direct'), false);
+  assert.equal(created['Confirmed Phone'], '+447700900123');
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
 });
 
 test('direct ad route labels new Meta LP records with the guide and utm campaign', async () => {
@@ -393,13 +439,14 @@ test('phone and confirmed phone are stored as E.164 and a new access lead is kep
   const kinds = calls.filter((call) => call.formula).map((call) => (
     call.formula.includes('{Phone}') ? 'phone' : call.formula.includes('{Full Name}') ? 'name' : 'email'
   ));
-  assert.deepEqual(kinds, ['email', 'name', 'phone']);
-  const patch = calls.find((call) => call.method === 'PATCH');
-  assert.equal(patch.recordId, 'recNEW');
-  assert.equal(patch.body.fields['Confirmed Phone'], '+447700900123');
-  assert.equal(patch.body.fields['LP Confirmed'], true);
-  assert.match(patch.body.fields['LP Confirmed At'], /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(calls.some((call) => call.method === 'DELETE'), false);
+  assert.deepEqual(kinds, ['email', 'name', 'phone', 'name']);
+  const created = calls.find((call) => call.method === 'POST');
+  assert.equal(created.body.fields['Confirmed Phone'], '+447700900123');
+  assert.equal(created.body.fields['LP Confirmed'], true);
+  assert.match(created.body.fields['LP Confirmed At'], /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(created.body.fields.Phone, undefined);
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
+  assert.equal(calls.some((call) => call.method === 'PATCH' || call.method === 'DELETE'), false);
 });
 
 test('the Meta phone window uses a JS cutoff and Phone Clean', () => {
@@ -435,22 +482,24 @@ test('a matched Meta phone is confirmed on that record, not the new access recor
   assert.equal(confirmed.body.fields['Confirmed Phone'], '+447759885561');
   assert.equal(confirmed.body.fields['LP Confirmed'], true);
   assert.match(confirmed.body.fields['LP Confirmed At'], /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(confirmed.body.fields['LP Consent'], `2026-11-12T12:38:20.592Z | guide-wtp/access | ${CONSENT}`);
-  const selfWrites = calls.filter((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
-  assert.equal(selfWrites.some((call) => call.body.fields['LP Confirmed'] === true), false);
+  assert.match(confirmed.body.fields['LP Consent'], new RegExp(CONSENT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal(confirmed.body.fields['LP Email'], 'anthonybetts246@outlook.com');
+  for (const key of ['Full Name', 'Email', 'Funnel Source', 'Campaign Name', 'Phone']) {
+    assert.equal(confirmed.body.fields[key], undefined, key);
+  }
+  assert.equal(calls.some((call) => call.method === 'POST' || call.recordId === 'recNEW'), false);
 
-  const miss = installAirtable({
-    recordFields: { recNEW: { 'LP Consent': 'stored consent' } }
-  });
+  const miss = installAirtable();
   const missStart = await post(startBody({ email: 'nobody@outlook.com' }));
   const missPhone = await post({
     action: 'phone', route: 'access', guide: 'wtp', phone: '07759885561',
     recordId: missStart.body.recordId, sig: missStart.body.sig
   });
   assert.equal(missPhone.body.recordId, 'recNEW');
-  const self = miss.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW');
+  const self = miss.find((call) => call.method === 'POST');
   assert.equal(self.body.fields['LP Confirmed'], true);
   assert.equal(self.body.fields['Confirmed Phone'], '+447759885561');
+  assert.equal(miss.filter((call) => call.method === 'POST').length, 1);
 });
 
 test('a new access lead adopts a recent Meta phone match and the next step uses that record', async () => {
@@ -476,24 +525,23 @@ test('a new access lead adopts a recent Meta phone match and the next step uses 
   assert.equal(phone.body.sig, lead.sign('recPHONE'));
   const nameGets = calls.filter((call) => call.formula && call.formula.includes('{Full Name}'));
   assert.equal(nameGets.length, 1);
-  assert.match(nameGets[0].formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane doe'/);
+  assert.match(nameGets[0].formula, /FIND\('@'/);
+  assert.match(nameGets[0].formula, /='jane doe'/);
   const phoneGet = calls.find((call) => call.formula && call.formula.includes('{Phone}'));
   assert.match(phoneGet.formula, /\+447700900123/);
-  assert.match(phoneGet.formula, /\{Funnel Source\}='Meta'/);
-  assert.match(phoneGet.formula, /IS_AFTER\(\{Date Captured\}, DATETIME_PARSE\(/);
-  assert.match(phoneGet.formula, /RECORD_ID\(\)!='recNEW'/);
+  assert.match(phoneGet.formula, /\{Confirmed Phone\}/);
+  assert.equal(phoneGet.formula.includes('Funnel Source'), false);
+  assert.equal(phoneGet.formula.includes('IS_AFTER'), false);
   const confirmed = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recPHONE');
   assert.equal(confirmed.body.fields['Confirmed Phone'], '+447700900123');
   assert.equal(confirmed.body.fields['LP Confirmed'], true);
-  assert.equal(confirmed.body.fields['LP Consent'], `2026-01-01T00:00:00.000Z | guide-wtp/access | ${CONSENT}`);
-  for (const key of ['Full Name', 'Funnel Source', 'Campaign Name', 'Lead Status', 'Phone']) {
+  assert.equal(confirmed.body.fields['LP Email'], 'jane@example.com');
+  assert.match(confirmed.body.fields['LP Consent'], /guide-wtp\/access/);
+  for (const key of ['Full Name', 'Email', 'Funnel Source', 'Campaign Name', 'Lead Status', 'Phone']) {
     assert.equal(confirmed.body.fields[key], undefined, key);
   }
-  const dup = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW' && call.body.fields.Duplicate);
-  assert.deepEqual(dup.body.fields, { Duplicate: true });
-  const note = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recNEW' && call.body.fields.Notes);
-  assert.deepEqual(note.body.fields, { Notes: 'Merged into recPHONE' });
-  assert.equal(calls.some((call) => call.method === 'DELETE'), false);
+  assert.equal(calls.some((call) => call.method === 'POST' || call.method === 'DELETE'), false);
+  assert.equal(calls.some((call) => call.recordId === 'recNEW'), false);
 
   const band = await post({
     action: 'band', route: 'access', guide: 'wtp', band: '100-250',
@@ -516,7 +564,8 @@ test('an access start with no email match links an exact-name Meta lead', async 
   assert.equal(calls.some((call) => call.method === 'POST'), false);
   const nameGets = calls.filter((call) => call.formula && call.formula.includes('{Full Name}'));
   assert.equal(nameGets.length, 1);
-  assert.match(nameGets[0].formula, /LOWER\(TRIM\(\{Full Name\}\)\)='jane doe'/);
+  assert.match(nameGets[0].formula, /FIND\('@'/);
+  assert.match(nameGets[0].formula, /='jane doe'/);
   const linked = calls.find((call) => call.method === 'PATCH');
   assert.equal(linked.recordId, 'recNAME');
   assert.equal(linked.body.fields['LP Email'], 'jane@example.com');
@@ -568,14 +617,13 @@ test('an email match is not merged again by phone, and a missing notes field doe
 
   lead.resetNoteFieldCache();
   const mergeCalls = installAirtable({
-    phoneRecords: [{ id: 'recPHONE', fields: {} }],
+    phoneRecords: [{ id: 'recPHONE', fields: { Phone: '+447700900123' } }],
     recordFields: { recNEW: { 'Full Name': 'Jane Doe', 'LP Consent': 'stored consent' } },
     noteStatus: 422
   });
-  const created = await post(startBody({ email: 'other@example.com' }));
   const moved = await post({
     action: 'phone', route: 'access', guide: 'wtp', phone: '07700900123',
-    recordId: created.body.recordId, sig: created.body.sig
+    recordId: 'recNEW', sig: lead.signNew('recNEW')
   });
   assert.equal(moved.statusCode, 200);
   assert.equal(moved.body.ok, true);
@@ -768,25 +816,35 @@ test('ad route maps funnel source and campaign, and sends Meta events only for M
 
     process.env.META_PIXEL_ID = 'pixel-test';
     process.env.META_CAPI_TOKEN = 'capi-test';
+    assert.equal(lead.accessCreateSource({ platform: 'facebook' }), 'Other');
+    assert.equal(lead.accessCreateSource({ fbclid: 'click' }), 'Other');
+    assert.equal(lead.accessCreateSource({ platform: 'google' }), 'Google');
+    assert.equal(lead.accessCreateSource({ platform: 'linkedin' }), 'LinkedIn');
+    assert.equal(lead.accessCreateSource({ platform: 'email' }), 'Website');
+    assert.equal(lead.accessCreateSource({}), 'Other');
+
     const accessCalls = installAirtable();
     const accessStart = await post(startBody({ track: { platform: 'facebook', campaign: 'Form Ad' } }));
+    assert.equal(accessStart.body.recordId, null);
+    const accessPhone = await confirmAccess(accessStart);
     const accessBand = await post({
       action: 'band', route: 'access', guide: 'wtp', band: '100-250', eventId: 'evt-access',
-      recordId: accessStart.body.recordId, sig: accessStart.body.sig,
+      recordId: accessPhone.body.recordId, sig: accessPhone.body.sig,
       track: { platform: 'facebook', campaign: 'Form Ad' }
     });
     assert.equal(accessBand.body.ok, true);
-    assert.equal(accessCalls.find((call) => call.method === 'POST').body.fields['Funnel Source'], 'Meta');
+    assert.equal(accessCalls.find((call) => call.method === 'POST').body.fields['Funnel Source'], 'Other');
     assert.equal(accessCalls.find((call) => call.method === 'POST').body.fields['Campaign Name'], 'Form Ad');
     assert.equal(capiCalls(accessCalls)[0].body.data[0].event_name, 'ConfirmedLead');
 
     const quietAccess = installAirtable();
     const quietStart = await post(startBody({ email: 'quiet@example.com' }));
+    const quietPhone = await confirmAccess(quietStart);
     await post({
       action: 'band', route: 'access', guide: 'wtp', band: 'u100', eventId: 'evt-quiet',
-      recordId: quietStart.body.recordId, sig: quietStart.body.sig, track: {}
+      recordId: quietPhone.body.recordId, sig: quietPhone.body.sig, track: {}
     });
-    assert.equal(quietAccess.find((call) => call.method === 'POST').body.fields['Funnel Source'], 'Meta');
+    assert.equal(quietAccess.find((call) => call.method === 'POST').body.fields['Funnel Source'], 'Other');
     assert.equal(capiCalls(quietAccess).length, 0);
   } finally {
     delete process.env.META_PIXEL_ID;
@@ -819,4 +877,238 @@ test('the trust line keeps only Secure and the phone step carries the matched se
   assert.equal(html.includes('ICO registered'), false);
   assert.ok(html.includes(CONSENT));
   assert.match(html, /if\(r\.recordId && r\.sig\)\{ state\.recordId=r\.recordId; state\.sig=r\.sig; \}/);
+  assert.match(html, /state\.recordId=r\.recordId; state\.sig=r\.sig; state\.first=fn; state\.email=em;/);
+  assert.match(html, /body\.recordId=state\.recordId; body\.sig=state\.sig;/);
+});
+
+test('a return visit hours later updates the lead matched by LP Email', async () => {
+  const calls = installAirtable({
+    emailRecords: [{
+      id: 'recRACHAEL',
+      fields: {
+        Email: 'rachael.form@outlook.com',
+        'LP Email': 'rachelb3630@gmail.com',
+        'Full Name': 'Rachael Brown',
+        'Funnel Source': 'Meta',
+        'Campaign Name': 'Instant form',
+        'Meta Ad ID': 'ad-keep'
+      }
+    }]
+  });
+  const res = await post(startBody({
+    first: 'Rachael',
+    last: 'Brown',
+    email: 'RachelB3630@googlemail.com'
+  }));
+  assert.equal(res.body.recordId, 'recRACHAEL');
+  assert.equal(res.body.sig, lead.sign('recRACHAEL'));
+  assert.match(calls[0].formula, /LOWER\(TRIM\(\{LP Email\}\)\)='rachelb3630@gmail\.com'/);
+  assert.match(calls[0].formula, /LOWER\(TRIM\(\{LP Email\}\)\)='rachelb3630@googlemail\.com'/);
+  assert.equal(calls[0].formula.includes('IS_AFTER'), false);
+  assert.equal(calls[0].formula.includes('Date Captured'), false);
+  const patch = calls.find((call) => call.method === 'PATCH' && call.recordId === 'recRACHAEL');
+  assert.equal(patch.body.fields['LP Email'], 'rachelb3630@googlemail.com');
+  for (const key of ['Email', 'Full Name', 'Funnel Source', 'Campaign Name', 'Meta Ad ID']) {
+    assert.equal(patch.body.fields[key], undefined, key);
+  }
+  const phone = await confirmAccess(res);
+  assert.equal(phone.body.recordId, 'recRACHAEL');
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
+});
+
+test('the same phone with a new email updates the existing lead', async () => {
+  const calls = installAirtable({
+    phoneRecords: [{
+      id: 'recPHONE',
+      fields: {
+        Phone: '07700 900123',
+        Email: 'meta.form@example.com',
+        'Full Name': 'Jane Doe',
+        'Funnel Source': 'Meta',
+        'Campaign Name': 'Keep Me',
+        'Meta Ad ID': 'ad1'
+      }
+    }]
+  });
+  const start = await post(startBody({ email: 'new.person@example.com', first: 'Someone', last: 'Else' }));
+  assert.equal(start.body.recordId, null);
+  const phone = await post({
+    action: 'phone', route: 'access', guide: 'wtp', phone: '07700 900123',
+    recordId: start.body.recordId, sig: start.body.sig
+  });
+  assert.equal(phone.body.ok, true);
+  assert.equal(phone.body.recordId, 'recPHONE');
+  const phoneGet = calls.find((call) => call.formula && call.formula.includes('{Confirmed Phone}'));
+  assert.equal(phoneGet.formula.includes('IS_AFTER'), false);
+  assert.equal(phoneGet.formula.includes('Funnel Source'), false);
+  const patch = calls.find((call) => call.method === 'PATCH');
+  assert.equal(patch.recordId, 'recPHONE');
+  assert.equal(patch.body.fields['Confirmed Phone'], '+447700900123');
+  assert.equal(patch.body.fields['LP Confirmed'], true);
+  assert.equal(patch.body.fields['LP Email'], 'new.person@example.com');
+  assert.match(patch.body.fields['LP Consent'], /typed email: new\.person@example.com$/);
+  for (const key of ['Email', 'Full Name', 'Funnel Source', 'Campaign Name', 'Meta Ad ID', 'Phone', 'Lead Status']) {
+    assert.equal(patch.body.fields[key], undefined, key);
+  }
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
+  assert.equal(
+    calls.filter((call) => call.formula && call.formula.includes('{Full Name}') && !call.formula.includes('{Meta Leadgen ID}')).length,
+    0
+  );
+
+  const confirmedOnly = installAirtable({
+    phoneRecords: [{
+      id: 'recCONF',
+      fields: { 'Confirmed Phone': '+447700900123', Email: 'old@example.com', 'Campaign Name': 'Old', 'Funnel Source': 'Meta' }
+    }]
+  });
+  const again = await post(startBody({ email: 'another@example.com', first: 'Ann', last: 'Other' }));
+  const merged = await confirmAccess(again);
+  assert.equal(merged.body.recordId, 'recCONF');
+  assert.equal(confirmedOnly.some((call) => call.method === 'POST'), false);
+  const confirmedPatch = confirmedOnly.find((call) => call.method === 'PATCH');
+  assert.equal(confirmedPatch.body.fields['LP Email'], 'another@example.com');
+  assert.equal(confirmedPatch.body.fields.Email, undefined);
+  assert.equal(confirmedPatch.body.fields['Campaign Name'], undefined);
+});
+
+test('a brand-new person creates one record that includes the phone', async () => {
+  const calls = installAirtable();
+  const start = await post(startBody({
+    track: { campaign: 'WTP LP access test v1', adset: 'WTP LP access test v1 adset', platform: 'facebook' }
+  }));
+  assert.equal(start.body.recordId, null);
+  assert.equal(calls.some((call) => call.method !== 'GET'), false);
+  const phone = await confirmAccess(start);
+  assert.equal(phone.body.recordId, 'recNEW');
+  assert.equal(phone.body.sig, lead.sign('recNEW'));
+  const posts = calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1);
+  const created = posts[0].body.fields;
+  assert.equal(created['Full Name'], 'Jane Doe');
+  assert.equal(created.Email, 'jane@example.com');
+  assert.equal(created['Lead Status'], 'New');
+  assert.equal(created['Confirmed Phone'], '+447700900123');
+  assert.equal(created['LP Confirmed'], true);
+  assert.equal(created['Campaign Name'], 'WTP Confirmed Route');
+  assert.equal(created['Ad Set'], 'WTP Confirmed Route');
+  assert.equal(created['Funnel Source'], 'Other');
+  assert.equal(created.Phone, undefined);
+  assert.equal(calls.some((call) => call.method === 'PATCH'), false);
+});
+
+test('an email typed in the surname box still matches the lead', async () => {
+  const calls = installAirtable({
+    anyNameRecords: [{
+      id: 'recSURNAME',
+      fields: {
+        'Full Name': 'Jane Doe@gmail.com',
+        Email: 'meta@example.com',
+        'Funnel Source': 'Meta',
+        'Campaign Name': 'Keep Me'
+      }
+    }]
+  });
+  const start = await post(startBody({ first: 'Jane', last: 'Doe@gmail.com', email: 'typed@example.com' }));
+  assert.equal(start.body.recordId, null);
+  assert.equal(calls.some((call) => call.method === 'POST'), false);
+  const recent = calls.find((call) => call.formula && call.formula.includes('{Meta Leadgen ID}'));
+  assert.match(recent.formula, /='jane doe'/);
+  const phone = await confirmAccess(start);
+  assert.equal(phone.body.recordId, 'recSURNAME');
+  const exact = calls.filter((call) => call.formula && call.formula.includes('{Full Name}') && !call.formula.includes('{Meta Leadgen ID}'));
+  assert.equal(exact.length, 1);
+  assert.match(exact[0].formula, /='jane doe'/);
+  assert.match(exact[0].formula, /FIND\('@'/);
+  assert.equal(exact[0].formula.includes('IS_AFTER'), false);
+  const patch = calls.find((call) => call.method === 'PATCH');
+  assert.equal(patch.recordId, 'recSURNAME');
+  assert.equal(patch.body.fields['LP Email'], 'typed@example.com');
+  assert.equal(patch.body.fields['Confirmed Phone'], '+447700900123');
+  for (const key of ['Email', 'Full Name', 'Funnel Source', 'Campaign Name']) {
+    assert.equal(patch.body.fields[key], undefined, key);
+  }
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
+});
+
+test('leaving before the phone step creates no record', async () => {
+  const calls = installAirtable();
+  const res = await post(startBody({ email: 'left@example.com' }));
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.recordId, null);
+  assert.equal(lead.readPending(res.body.sig).email, 'left@example.com');
+  assert.equal(calls.some((call) => call.method !== 'GET'), false);
+  assert.equal(calls.length, 2);
+  const band = await post({
+    action: 'band', route: 'access', guide: 'wtp', band: 'u100',
+    recordId: res.body.recordId, sig: res.body.sig
+  });
+  assert.equal(band.statusCode, 400);
+  assert.equal(band.body.error, 'session');
+  assert.equal(calls.some((call) => call.method !== 'GET'), false);
+});
+
+test('a pending token expires after two hours and a tampered token is rejected', async () => {
+  const fresh = lead.signPending({
+    iat: Date.now(),
+    first: 'Jane', last: 'Doe', email: 'jane@example.com', consent: 'c', guide: 'wtp', track: {}
+  });
+  assert.equal(lead.readPending(fresh).email, 'jane@example.com');
+  const stale = lead.signPending({
+    iat: Date.now() - 2 * 60 * 60 * 1000 - 1000,
+    first: 'Jane', last: 'Doe', email: 'jane@example.com', consent: 'c', guide: 'wtp', track: {}
+  });
+  assert.equal(lead.readPending(stale), null);
+  const flipped = fresh.slice(0, -1) + (fresh.endsWith('a') ? 'b' : 'a');
+  assert.equal(lead.readPending(flipped), null);
+  const calls = installAirtable();
+  const res = await post({
+    action: 'phone', route: 'access', guide: 'wtp', phone: '07700900123',
+    recordId: null, sig: stale
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'session');
+  assert.equal(calls.length, 0);
+});
+
+test('step 1 without a recordId still hands the token to the phone step and n8n', async () => {
+  process.env.N8N_WEBHOOK = 'https://n8n.example/hook';
+  try {
+    const calls = installAirtable();
+    const start = await post(startBody({ email: 'token@example.com' }));
+    const state = { recordId: start.body.recordId, sig: start.body.sig };
+    assert.equal(state.recordId, null);
+    assert.ok(state.sig);
+    const started = calls.find((call) => String(call.url).includes('n8n.example'));
+    assert.equal(started.body.step, 'start');
+    assert.equal(started.body.route, 'access');
+    assert.equal(started.body.created, false);
+    assert.equal(started.body.recordId, null);
+    assert.equal(started.body.sig, state.sig);
+    assert.equal(started.body.email, 'token@example.com');
+    assert.equal(started.body.first, 'Jane');
+    const phone = await post({
+      action: 'phone', route: 'access', guide: 'wtp', phone: '07700900123',
+      recordId: state.recordId, sig: state.sig
+    });
+    assert.equal(phone.body.ok, true);
+    assert.equal(phone.body.recordId, 'recNEW');
+    assert.equal(phone.body.sig, lead.sign('recNEW'));
+    const state2 = phone.body.recordId && phone.body.sig
+      ? { recordId: phone.body.recordId, sig: phone.body.sig }
+      : state;
+    const hooks = calls.filter((call) => String(call.url).includes('n8n.example'));
+    assert.equal(hooks[1].body.step, 'phone');
+    assert.equal(hooks[1].body.recordId, 'recNEW');
+    const band = await post({
+      action: 'band', route: 'access', guide: 'wtp', band: 'u100',
+      recordId: state2.recordId, sig: state2.sig
+    });
+    assert.equal(band.body.ok, true);
+    const bandPatch = calls.find((call) => call.body && call.body.fields && call.body.fields['Self-Declared Band']);
+    assert.equal(bandPatch.recordId, 'recNEW');
+    assert.equal(bandPatch.body.fields['Self-Declared Band'], 'Under £100,000');
+  } finally {
+    delete process.env.N8N_WEBHOOK;
+  }
 });

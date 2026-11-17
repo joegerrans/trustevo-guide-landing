@@ -48,15 +48,49 @@ const F = {
 // An /access visitor whose email doesn't match is linked to a Meta lead with the
 // exact same full name captured in the last NAME_MATCH_MINUTES.
 const NAME_MATCH_MINUTES = 10;
+const PENDING_MS = 2 * 60 * 60 * 1000;
 const CONSENT_TEXT = 'I understand I will receive this guide and ongoing insights from TrustEvo by email, phone or SMS. You can opt out anytime.';
 
 const sha = (v) => crypto.createHash('sha256').update(String(v).trim().toLowerCase()).digest('hex');
-const sign = (id) => crypto.createHmac('sha256', process.env.SIGNING_SECRET || 'dev').update(String(id)).digest('hex').slice(0, 32);
-// One-time signature for an access-route record created at step 1 (no email match yet).
+const signingKey = () => process.env.SIGNING_SECRET || 'dev';
+const sign = (id) => crypto.createHmac('sha256', signingKey()).update(String(id)).digest('hex').slice(0, 32);
+// One-time signature for an access-route record created at step 1 before deferred creation.
+// Kept so a visitor already on the phone step during deploy can still finish.
 const signNew = (id) => sign(`new:${id}`);
 
+// Step-1 details, signed with SIGNING_SECRET, valid for 2 hours. No record is created yet.
+function signPending(payload) {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const mac = crypto.createHmac('sha256', signingKey()).update(body).digest('base64url');
+  return `${body}.${mac}`;
+}
+
+function readPending(token) {
+  if (typeof token !== 'string' || token.length < 3 || token.length > 4000) return null;
+  const dot = token.indexOf('.');
+  if (dot <= 0 || dot !== token.lastIndexOf('.')) return null;
+  const body = token.slice(0, dot);
+  const mac = token.slice(dot + 1);
+  const expected = crypto.createHmac('sha256', signingKey()).update(body).digest('base64url');
+  const left = Buffer.from(mac);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) return null;
+  let payload;
+  try { payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); }
+  catch (e) { return null; }
+  if (!payload || typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) return null;
+  if (!GUIDES[payload.guide] || !payload.email || !payload.first || !payload.last || !payload.consent) return null;
+  const age = Date.now() - payload.iat;
+  if (age > PENDING_MS || age < -60 * 1000) return null;
+  return payload;
+}
+
 function readSession(recordId, sig) {
-  if (!recordId || !sig) return null;
+  if (!sig) return null;
+  if (!recordId) {
+    const pending = readPending(sig);
+    return pending ? { id: null, pending } : null;
+  }
   const id = String(recordId);
   if (sig === signNew(id)) return { id, created: true };
   if (sig === sign(id)) return { id, created: false };
@@ -110,6 +144,15 @@ function funnelSource(track) {
   if (src === 'google') return 'Google';
   if (src === 'email') return 'Website';
   return 'Other';
+}
+
+// Leads "Funnel Source" choices: Meta, Google, Website, LinkedIn, Referral, Partner, Other.
+// A new /access record that matched no Meta lead must not be labelled Meta, and must not
+// invent a choice (typecast would add one). Non-Meta visits already map onto an existing
+// choice. A Meta-looking visit with no Meta lead is stored as Other.
+function accessCreateSource(track) {
+  const src = funnelSource(track);
+  return src === 'Meta' ? 'Other' : src;
 }
 
 function sourceLabel(src) {
@@ -180,7 +223,13 @@ function emailFormula(email) {
   const values = (domain === 'gmail.com' || domain === 'googlemail.com')
     ? [`${local}@gmail.com`, `${local}@googlemail.com`]
     : [cleaned];
-  const checks = values.map((value) => `LOWER(TRIM({${F.email}}))=${formulaString(value)}`);
+  // Email and LP Email, any age. gmail.com and googlemail.com stay the same address.
+  const checks = [];
+  for (const value of values) {
+    const lit = formulaString(value);
+    checks.push(`LOWER(TRIM({${F.email}}))=${lit}`);
+    checks.push(`LOWER(TRIM({${F.lpEmail}}))=${lit}`);
+  }
   return checks.length === 1 ? checks[0] : `OR(${checks.join(',')})`;
 }
 
@@ -211,10 +260,56 @@ function accessAdset(adset) {
   return accessLabel(raw);
 }
 
-function strippedPhoneExpr() {
-  let expr = `{${F.phone}}`;
+function pendingPayload(b, email, consent, track) {
+  const t = track || {};
+  return {
+    iat: Date.now(),
+    first: String(b.first).trim(),
+    last: String(b.last).trim(),
+    email,
+    consent,
+    guide: b.guide,
+    track: {
+      campaign: t.campaign || '',
+      medium: t.medium || '',
+      adset: t.adset || '',
+      ad: t.ad || '',
+      adId: t.adId || '',
+      platform: t.platform || '',
+      source: t.source || '',
+      fbclid: t.fbclid || ''
+    }
+  };
+}
+
+function accessNewFields(pending, e164) {
+  const t = pending.track || {};
+  const source = accessCreateSource(t);
+  const fields = {
+    [F.name]: joinName(pending.first, pending.last),
+    [F.email]: pending.email,
+    [F.status]: 'New',
+    [F.campaign]: accessCampaign(pending.guide, t.campaign),
+    [F.adset]: accessAdset(t.adset),
+    [F.adId]: t.adId || undefined,
+    [F.platform]: t.platform || undefined,
+    [F.consent]: pending.consent,
+    [F.confirmedPhone]: e164,
+    [F.confirmed]: true,
+    [F.confirmedAt]: new Date().toISOString()
+  };
+  if (source) fields[F.source] = source;
+  return fields;
+}
+
+function strippedFieldExpr(fieldName) {
+  let expr = `{${fieldName}}`;
   for (const ch of [' ', '-', '(', ')']) expr = `SUBSTITUTE(${expr},${formulaString(ch)},'')`;
   return expr;
+}
+
+function strippedPhoneExpr() {
+  return strippedFieldExpr(F.phone);
 }
 
 function phoneVariants(e164) {
@@ -230,6 +325,17 @@ function phoneFormula(e164, selfId) {
     return `OR({${F.phone}}=${lit},{Phone Clean}=${lit},${stripped}=${lit})`;
   }).join(',');
   return `AND(${metaWindow(selfId)},OR(${ors}))`;
+}
+
+// Phone or Confirmed Phone, any age, any funnel. No self record exists yet on the deferred path.
+function phoneAnyFormula(e164) {
+  const phone = strippedPhoneExpr();
+  const confirmed = strippedFieldExpr(F.confirmedPhone);
+  const ors = phoneVariants(e164).map((v) => {
+    const lit = formulaString(v);
+    return `OR({${F.phone}}=${lit},{Phone Clean}=${lit},${phone}=${lit},{${F.confirmedPhone}}=${lit},${confirmed}=${lit})`;
+  }).join(',');
+  return `OR(${ors})`;
 }
 
 function duplicatePhoneFormula(e164, selfId) {
@@ -309,17 +415,42 @@ function normName(v) {
   return String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+// People sometimes type an email into the surname box. Drop the @ and everything after it
+// before an exact name comparison, on both the typed name and the stored name.
+function nameForMatch(value) {
+  const raw = String(value || '');
+  const at = raw.indexOf('@');
+  return normName(at === -1 ? raw : raw.slice(0, at));
+}
+
+function strippedNameExpr() {
+  const field = `{${F.name}}&""`;
+  const at = formulaString('@');
+  return `LOWER(TRIM(IF(FIND(${at},${field}),LEFT(${field},FIND(${at},${field})-1),${field})))`;
+}
+
 // Exact full name (case-insensitive, trimmed), Meta instant-form lead only, last 10 minutes.
 function nameFormula(fullName) {
   const cutoff = new Date(Date.now() - NAME_MATCH_MINUTES * 60 * 1000).toISOString();
   return `AND({${F.source}}='Meta',{Meta Leadgen ID}!='',` +
     `IS_AFTER({Date Captured}, DATETIME_PARSE(${formulaString(cutoff)})),` +
-    `LOWER(TRIM({${F.name}}))=${formulaString(normName(fullName))})`;
+    `${strippedNameExpr()}=${formulaString(nameForMatch(fullName))})`;
+}
+
+// Exact full name at any age, used when the phone step still has no record.
+function exactNameFormula(fullName) {
+  return `${strippedNameExpr()}=${formulaString(nameForMatch(fullName))}`;
 }
 
 async function findRecentMetaByName(fullName) {
-  if (!normName(fullName)) return null;
+  if (!nameForMatch(fullName)) return null;
   const j = await at('GET', listQuery(nameFormula(fullName)));
+  return j.records && j.records[0];
+}
+
+async function findByExactName(fullName) {
+  if (!nameForMatch(fullName)) return null;
+  const j = await at('GET', listQuery(exactNameFormula(fullName)));
   return j.records && j.records[0];
 }
 
@@ -338,6 +469,33 @@ function typedEmailFields(consent, typed, storedEmail) {
 async function findRecentMetaByPhone(e164, selfId) {
   const j = await at('GET', listQuery(phoneFormula(e164, selfId)));
   return j.records && j.records[0];
+}
+
+async function findByPhoneAny(e164) {
+  const j = await at('GET', listQuery(phoneAnyFormula(e164)));
+  return j.records && j.records[0];
+}
+
+function confirmOn(consent, typedEmail, storedEmail, e164) {
+  return Object.assign({
+    [F.confirmedPhone]: e164,
+    [F.confirmed]: true,
+    [F.confirmedAt]: new Date().toISOString()
+  }, typedEmailFields(consent, typedEmail, storedEmail));
+}
+
+// Deferred /access phone step. Phone, then exact name, otherwise one new record.
+async function settleAccessPhone(pending, e164) {
+  const fullName = joinName(pending.first, pending.last);
+  const byPhone = await findByPhoneAny(e164);
+  const hit = byPhone || await findByExactName(fullName);
+  if (hit) {
+    const storedEmail = hit.fields && hit.fields[F.email];
+    await write(hit.id, confirmOn(pending.consent, pending.email, storedEmail, e164));
+    return hit.id;
+  }
+  const created = await write(null, accessNewFields(pending, e164));
+  return created.id;
 }
 
 async function findOtherByPhone(e164, selfId) {
@@ -412,7 +570,8 @@ async function handler(req, res) {
 
   try {
     // STEP 1: name, email, consent. The ad route always creates a new lead.
-    // Only /access updates an existing lead, and only by email at this step.
+    // /access updates an existing lead by Email or LP Email, then by a recent Meta name.
+    // If neither matches, nothing is created; the phone step carries a signed token.
     if (b.action === 'start') {
       const email = String(b.email || '').trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || !b.first || !b.last || !b.consent) return res.json({ ok: false, error: 'missing' });
@@ -431,18 +590,21 @@ async function handler(req, res) {
       }
       let created = false;
       if (rec) {
-        // Meta form lead found: keep its name, email, source and campaign, just add consent
+        // Existing lead: keep its name, email, source and campaign, just add consent.
+        // A different typed email goes to LP Email. Email itself is never overwritten.
         const storedEmail = rec.fields && rec.fields[F.email];
         rec = await write(rec.id, typedEmailFields(consent, email, storedEmail));
+      } else if (route === 'access') {
+        const sig = signPending(pendingPayload(b, email, consent, t));
+        await n8n({ step: 'start', route, created: false, recordId: null, email, first: b.first, last: b.last, track: t, sig });
+        return res.json({ ok: true, recordId: null, sig });
       } else {
         created = true;
         const fields = {
           [F.name]: joinName(b.first, b.last), [F.email]: email, [F.status]: 'New',
-          [F.source]: route === 'access' ? 'Meta' : funnelSource(t),
-          [F.campaign]: route === 'access'
-            ? accessCampaign(b.guide, t.campaign)
-            : adCampaign(b.guide, t),
-          [F.adset]: route === 'access' ? accessAdset(t.adset) : (t.adset || undefined), [F.adId]: t.adId || undefined, [F.platform]: t.platform || undefined,
+          [F.source]: funnelSource(t),
+          [F.campaign]: adCampaign(b.guide, t),
+          [F.adset]: t.adset || undefined, [F.adId]: t.adId || undefined, [F.platform]: t.platform || undefined,
           [F.consent]: consent
         };
         if (emailDuplicate) fields[F.duplicate] = true;
@@ -453,11 +615,11 @@ async function handler(req, res) {
       return res.json({ ok: true, recordId: rec.id, sig });
     }
 
-    // Later steps carry the signed record id. A new-record sig lets the phone step match a Meta lead.
+    // Later steps carry the signed record id, or the step-1 token when no record exists yet.
     const session = readSession(b.recordId, b.sig);
     if (!session) return res.status(400).json({ ok: false, error: 'session' });
 
-    // STEP 2: mobile. A newly created access lead can still match a recent Meta lead by phone.
+    // STEP 2: mobile. A deferred access visit matches Phone / Confirmed Phone, then exact name.
     if (b.action === 'phone') {
       const e164 = normPhone(b.phone);
       if (!e164) return res.json({ ok: false, error: 'invalid' });
@@ -466,7 +628,10 @@ async function handler(req, res) {
       if (test) return res.json({ ok: true, test: true });
 
       let targetId = session.id;
-      if (route === 'access' && session.created) {
+      if (session.pending) {
+        if (route !== 'access') return res.status(400).json({ ok: false, error: 'session' });
+        targetId = await settleAccessPhone(session.pending, e164);
+      } else if (route === 'access' && session.created) {
         const hit = otherRecord(await findRecentMetaByPhone(e164, session.id), session.id);
         if (hit) {
           const current = await at('GET', `/${session.id}`);
@@ -506,9 +671,10 @@ async function handler(req, res) {
       return res.json({ ok: true, recordId: targetId, sig: sign(targetId) });
     }
 
-    // STEP 3: band, then tell Meta
+    // STEP 3: band, then tell Meta. A deferred visit has no record until the phone step.
     if (b.action === 'band') {
       if (!BANDS[b.band]) return res.json({ ok: false, error: 'band' });
+      if (!session.id) return res.status(400).json({ ok: false, error: 'session' });
       if (test) return res.json({ ok: true, test: true });
       const rec = await write(session.id, { [F.band]: BANDS[b.band].label });
       const fbc = headerCookie(req, '_fbc') || b.fbc || '';
@@ -540,8 +706,14 @@ handler.phoneFormula = phoneFormula;
 handler.formulaString = formulaString;
 handler.sign = sign;
 handler.signNew = signNew;
+handler.signPending = signPending;
+handler.readPending = readPending;
 handler.joinName = joinName;
 handler.nameFormula = nameFormula;
+handler.nameForMatch = nameForMatch;
+handler.exactNameFormula = exactNameFormula;
+handler.phoneAnyFormula = phoneAnyFormula;
+handler.accessCreateSource = accessCreateSource;
 handler.typedEmailFields = typedEmailFields;
 handler.NOTE_FIELDS = NOTE_FIELDS;
 handler.resetNoteFieldCache = resetNoteFieldCache;
