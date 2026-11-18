@@ -1251,6 +1251,18 @@ test('45C consent marker, campaign fallback, host choice and unknown guide', asy
   }
 });
 
+test('cookie choices still store yes or no and only Accept loads the pixel', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(html, /if\(ck==='yes'\) maybePixel\(\); else if\(ck!=='no'\) \$\('ck'\)\.style\.display='block'/);
+  assert.match(html, /\$\('cka'\)\.onclick=function\(\)\{store\('te_ck','yes'\);\$\('ck'\)\.style\.display='none';maybePixel\(\)\}/);
+  assert.match(html, /\$\('ckr'\)\.onclick=function\(\)\{store\('te_ck','no'\);\$\('ck'\)\.style\.display='none'\}/);
+  assert.match(html, /\$\('ckopen'\)\.onclick=function\(e\)\{e\.preventDefault\(\);\$\('ck'\)\.style\.display='block'\}/);
+  assert.match(html, /id="cka"/);
+  assert.match(html, /id="ckr"/);
+  assert.equal(html.includes('>Accept all<'), true);
+  assert.equal(html.includes('>Reject non-essential<'), true);
+});
+
 test('the page chooses 45c from the host or ?g=45c and leaves every other host on wtp', () => {
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   const source = html.slice(html.indexOf('window.TE_GUIDES = '), html.indexOf('function guideKey('));

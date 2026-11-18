@@ -100,10 +100,42 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
 .spin{width:18px;height:18px;border:2.5px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite;display:none}
 .busy .spin{display:inline-block}
 @keyframes s{to{transform:rotate(360deg)}}
-.ck{position:fixed;left:0;right:0;bottom:0;z-index:20;display:none}
-.ck .in{max-width:480px;margin:0 auto;background:#fff;color:var(--ink);padding:14px 16px 16px;border-top:3px solid var(--teal);box-shadow:0 -8px 24px rgba(0,0,0,.25);font-size:13px;line-height:1.45}
-.ck .bt{display:flex;gap:8px;margin-top:10px}.ck button{flex:1;height:42px;border-radius:8px;border:0;font:700 14px Inter,sans-serif;cursor:pointer}
+.ck{position:fixed;left:0;right:0;bottom:0;z-index:20;display:none;background:#fff;color:var(--ink);border-top:2px solid var(--teal);box-shadow:0 -1px 0 rgba(10,35,57,.08)}
+.ck .in{display:flex;align-items:center;justify-content:space-between;gap:12px 20px;width:100%;margin:0;padding:8px 20px;background:transparent;font-size:13.5px;line-height:1.35}
+.ck .tx{margin:0;flex:1;min-width:0}
+.ck .tx a{color:var(--teal-d);font-weight:600}
+.ck .bt{display:flex;gap:8px;margin:0;flex:none}
+.ck button{flex:1 0 auto;min-width:10.25rem;height:34px;padding:0 14px;border-radius:8px;border:0;font:700 13px Inter,sans-serif;cursor:pointer;white-space:nowrap}
 .ck .a{background:var(--teal);color:#fff}.ck .r{background:var(--navy);color:#fff}
+.ck button:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+@media (max-width:720px){
+  .ck .in{flex-wrap:wrap;gap:4px;padding:5px 12px;font-size:12.5px;line-height:1.3}
+  .ck .tx{flex:1 1 100%}
+  .ck .bt{display:grid;grid-template-columns:1fr 1fr;flex:1 1 100%;width:100%}
+  .ck button{width:100%;min-width:0;height:32px;padding:0 8px;font-size:12.5px}
+}
+@media (max-width:480px){
+  body:has(#ck[style*="display: block"]),
+  body:has(#ck[style*="display:block"]){display:flex;flex-direction:column;height:100vh;max-height:100vh;overflow:hidden}
+  body:has(#ck[style*="display: block"]) .wrap,
+  body:has(#ck[style*="display:block"]) .wrap{flex:1 1 auto;min-height:0;overflow:auto}
+  body:has(#ck[style*="display: block"]) .ck,
+  body:has(#ck[style*="display:block"]) .ck{position:static;flex:none}
+  body:has(#ck[style*="display: block"]) .hero,
+  body:has(#ck[style*="display:block"]) .hero{padding-top:4px}
+  body:has(#ck[style*="display: block"]) .sub,
+  body:has(#ck[style*="display:block"]) .sub{margin-top:4px}
+  body:has(#ck[style*="display: block"]) .card,
+  body:has(#ck[style*="display:block"]) .card{margin-top:4px;padding-top:8px;padding-bottom:10px}
+  body:has(#ck[style*="display: block"]) .bar,
+  body:has(#ck[style*="display:block"]) .bar{margin:4px 0 4px}
+  body:has(#ck[style*="display: block"]) label.l,
+  body:has(#ck[style*="display:block"]) label.l{margin:4px 0 3px}
+  body:has(#ck[style*="display: block"]) .cons,
+  body:has(#ck[style*="display:block"]) .cons{margin-top:8px}
+  body:has(#ck[style*="display: block"]) .btn,
+  body:has(#ck[style*="display:block"]) .btn{margin-top:4px}
+}
 .demo{background:#FFF4D6;color:#5A4500;font-size:12px;padding:8px 12px;text-align:center}
 .demo a{color:#5A4500;font-weight:700;margin:0 4px}
 [hidden]{display:none!important}
@@ -286,8 +318,8 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
   </footer>
 </div>
 
-<div class="ck" id="ck"><div class="in">We use cookies to measure our advertising. You can accept or reject non-essential cookies. <a href="https://trustevo.co.uk/privacy" target="_blank" rel="noopener" style="color:#089C81;font-weight:600">Learn more</a>
-  <div class="bt"><button class="a" id="cka">Accept all</button><button class="r" id="ckr">Reject non-essential</button></div></div></div>
+<div class="ck" id="ck"><div class="in"><p class="tx">We use cookies to measure our advertising. You can accept or reject non-essential cookies. <a href="https://trustevo.co.uk/privacy" target="_blank" rel="noopener">Learn more</a></p>
+  <div class="bt"><button class="a" id="cka" type="button">Accept all</button><button class="r" id="ckr" type="button">Reject non-essential</button></div></div></div>
 
 <script>
 // Guide copy, links and the PDF permalink. WTP stays the default in the HTML above.
