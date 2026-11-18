@@ -1087,6 +1087,7 @@ test('step 1 without a recordId still hands the token to the phone step and n8n'
     assert.equal(started.body.sig, state.sig);
     assert.equal(started.body.email, 'token@example.com');
     assert.equal(started.body.first, 'Jane');
+    assert.equal(started.body.guide, 'wtp');
     const phone = await post({
       action: 'phone', route: 'access', guide: 'wtp', phone: '07700900123',
       recordId: state.recordId, sig: state.sig
@@ -1100,6 +1101,7 @@ test('step 1 without a recordId still hands the token to the phone step and n8n'
     const hooks = calls.filter((call) => String(call.url).includes('n8n.example'));
     assert.equal(hooks[1].body.step, 'phone');
     assert.equal(hooks[1].body.recordId, 'recNEW');
+    assert.equal(hooks[1].body.guide, 'wtp');
     const band = await post({
       action: 'band', route: 'access', guide: 'wtp', band: 'u100',
       recordId: state2.recordId, sig: state2.sig
@@ -1108,7 +1110,180 @@ test('step 1 without a recordId still hands the token to the phone step and n8n'
     const bandPatch = calls.find((call) => call.body && call.body.fields && call.body.fields['Self-Declared Band']);
     assert.equal(bandPatch.recordId, 'recNEW');
     assert.equal(bandPatch.body.fields['Self-Declared Band'], 'Under £100,000');
+    assert.equal(calls.filter((call) => String(call.url).includes('n8n.example')).pop().body.guide, 'wtp');
   } finally {
     delete process.env.N8N_WEBHOOK;
   }
+});
+
+function freezeTimes(fields) {
+  const out = {};
+  for (const key of Object.keys(fields)) {
+    out[key] = typeof fields[key] === 'string'
+      ? fields[key].replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, 'TS')
+      : fields[key];
+  }
+  return out;
+}
+
+test('WTP writes stay byte-identical for the same inputs', async () => {
+  const adCalls = installAirtable();
+  const ad = await post(startBody({
+    route: 'ad',
+    guide: 'wtp',
+    track: { campaign: 'Launch', adset: 'Broad', adId: 'ad9', platform: 'facebook' }
+  }));
+  assert.equal(ad.body.ok, true);
+  assert.deepEqual(freezeTimes(adCalls.find((call) => call.method === 'POST').body.fields), {
+    'Full Name': 'Jane Doe',
+    Email: 'jane@example.com',
+    'Lead Status': 'New',
+    'Funnel Source': 'Meta',
+    'Campaign Name': 'WTP Direct | Launch',
+    'Ad Set': 'Broad',
+    'Meta Ad ID': 'ad9',
+    Platform: 'facebook',
+    'LP Consent': `TS | guide-wtp | ${CONSENT}`
+  });
+
+  const accessCalls = installAirtable();
+  const start = await post(startBody({ guide: 'wtp', track: {} }));
+  assert.equal(start.body.recordId, null);
+  const phone = await confirmAccess(start, 'wtp');
+  assert.equal(phone.body.recordId, 'recNEW');
+  assert.deepEqual(freezeTimes(accessCalls.find((call) => call.method === 'POST').body.fields), {
+    'Full Name': 'Jane Doe',
+    Email: 'jane@example.com',
+    'Lead Status': 'New',
+    'Campaign Name': 'Landing Page - The Wealth Turning Point',
+    'LP Consent': `TS | guide-wtp/access | ${CONSENT}`,
+    'Confirmed Phone': '+447700900123',
+    'LP Confirmed': true,
+    'LP Confirmed At': 'TS',
+    'Funnel Source': 'Other'
+  });
+  assert.equal(lead.consentMarker('wtp', 'ad'), 'guide-wtp');
+  assert.equal(lead.consentMarker('wtp', 'access'), 'guide-wtp/access');
+});
+
+test('45C consent marker, campaign fallback, host choice and unknown guide', async () => {
+  assert.equal(lead.consentMarker('45c', 'ad'), 'guide-45c');
+  assert.equal(lead.consentMarker('45c', 'access'), 'guide-45c/access');
+  assert.equal(lead.resolveGuide('guide-45c.trustevo.co.uk', 'nope'), '45c');
+  assert.equal(lead.resolveGuide('GUIDE-45C.trustevo.co.uk:443', ''), '45c');
+  assert.equal(lead.resolveGuide('guide-wtp.trustevo.co.uk', undefined), 'wtp');
+  assert.equal(lead.resolveGuide('preview.vercel.app', '45C'), '45c');
+  assert.equal(lead.resolveGuide('preview.vercel.app', 'not-a-guide'), 'wtp');
+  assert.equal(lead.resolveGuide('evil.example', { guide: '45c' }), 'wtp');
+  assert.equal(lead.requestHost({
+    headers: { 'x-forwarded-host': 'guide-45c.trustevo.co.uk:443, internal.vercel.app', host: 'wrong.example' }
+  }), 'guide-45c.trustevo.co.uk');
+
+  const direct = installAirtable();
+  const directRes = await post(startBody({
+    route: 'ad',
+    guide: '45c',
+    email: 'direct45@example.com',
+    track: {}
+  }));
+  assert.equal(directRes.body.ok, true);
+  const directFields = direct.find((call) => call.method === 'POST').body.fields;
+  assert.match(directFields['LP Consent'], /\| guide-45c \| /);
+  assert.equal(directFields['LP Consent'].includes('guide-wtp'), false);
+  assert.equal(directFields['Campaign Name'], '45C Direct');
+  assert.equal(directFields['Funnel Source'], 'Other');
+
+  const accessCalls = installAirtable();
+  const accessStart = await post(startBody({ guide: '45c', email: 'access45@example.com', track: {} }));
+  assert.equal(accessStart.body.recordId, null);
+  assert.equal(lead.readPending(accessStart.body.sig).guide, '45c');
+  await confirmAccess(accessStart, '45c');
+  const accessFields = accessCalls.find((call) => call.method === 'POST').body.fields;
+  assert.equal(accessFields['Campaign Name'], 'Landing Page - The 45% Club');
+  assert.match(accessFields['LP Consent'], /\| guide-45c\/access \| /);
+  assert.equal(accessFields['LP Consent'].includes('| guide-wtp'), false);
+  assert.equal(accessFields['Funnel Source'], 'Other');
+  assert.equal(accessFields['Confirmed Phone'], '+447700900123');
+
+  const fromHost = installAirtable();
+  const hostBody = startBody({
+    route: 'ad',
+    email: 'host45@example.com',
+    guide: 'not-a-guide',
+    track: { platform: 'facebook', campaign: 'Launch' }
+  });
+  const hostRes = await post(hostBody, { host: 'internal.vercel.app', 'x-forwarded-host': 'guide-45c.trustevo.co.uk' });
+  assert.equal(hostRes.statusCode, 200);
+  assert.equal(hostRes.body.ok, true);
+  const hostFields = fromHost.find((call) => call.method === 'POST').body.fields;
+  assert.equal(hostFields['Campaign Name'], '45C Direct | Launch');
+  assert.equal(hostFields['Funnel Source'], 'Meta');
+  assert.match(hostFields['LP Consent'], /\| guide-45c \| /);
+
+  const unknown = installAirtable();
+  const unknownBody = startBody({ route: 'ad', email: 'unknown@example.com', track: { platform: 'linkedin', medium: 'post' } });
+  delete unknownBody.guide;
+  const unknownRes = await post(unknownBody, { host: 'preview-abc.vercel.app' });
+  assert.equal(unknownRes.body.ok, true);
+  const unknownFields = unknown.find((call) => call.method === 'POST').body.fields;
+  assert.equal(unknownFields['Campaign Name'], 'LinkedIn post');
+  assert.equal(unknownFields['Funnel Source'], 'LinkedIn');
+  assert.match(unknownFields['LP Consent'], /\| guide-wtp \| /);
+
+  const namedHost = installAirtable();
+  const namedBody = startBody({ route: 'ad', email: 'named-host@example.com', track: {} });
+  delete namedBody.guide;
+  await post(namedBody, { host: 'guide-wtp.trustevo.co.uk' });
+  const namedFields = namedHost.find((call) => call.method === 'POST').body.fields;
+  assert.equal(namedFields['Campaign Name'], 'WTP Direct');
+  assert.match(namedFields['LP Consent'], /\| guide-wtp \| /);
+
+  process.env.N8N_WEBHOOK = 'https://n8n.example/hook';
+  try {
+    const hooked = installAirtable();
+    await post(startBody({ route: 'ad', guide: '45c', email: 'hook45@example.com', track: { platform: 'facebook' } }));
+    const sent = hooked.find((call) => String(call.url).includes('n8n.example'));
+    assert.equal(sent.body.step, 'start');
+    assert.equal(sent.body.guide, '45c');
+    assert.equal(sent.body.route, 'ad');
+  } finally {
+    delete process.env.N8N_WEBHOOK;
+  }
+});
+
+test('the page chooses 45c from the host or ?g=45c and leaves every other host on wtp', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  const source = html.slice(html.indexOf('window.TE_GUIDES = '), html.indexOf('function guideKey('));
+  const guides = new Function('window', `${source}; return window.TE_GUIDES;`)({});
+  assert.equal(guides['45c'].toc.length, 16);
+  assert.equal(guides.wtp.toc.length, 16);
+  assert.equal(guides['45c'].name, 'The 45% Club');
+  assert.equal(guides['45c'].url, 'https://45-percent-club.trustevo.co.uk/');
+  assert.equal(guides['45c'].pdf, 'https://45-percent-club.trustevo.co.uk/pdf');
+  assert.equal(guides.wtp.pdf, 'https://wealth-turning-point.trustevo.co.uk/pdf');
+  assert.equal(guides.wtp.url, 'https://wealth-turning-point.trustevo.co.uk/');
+  assert.equal(/\.pdf[?"']/.test(html), false);
+  assert.equal(html.includes('The-Wealth-Turning-Point'), false);
+  assert.equal(html.includes('The-45-Club'), false);
+  assert.equal(html.includes('?v='), false);
+  assert.match(html, /href="\/favicon.png"/);
+  const copy = JSON.stringify(guides['45c']);
+  for (const word of ['trap', 'trick', 'loophole', 'avoid tax', 'guaranteed', 'secret']) {
+    assert.equal(copy.toLowerCase().includes(word), false, word);
+  }
+  assert.equal(copy.includes('!'), false);
+  const fn = html.slice(html.indexOf('function guideKey('), html.indexOf('function applyGuide('));
+  const guideKey = new Function(`${fn}; return guideKey;`)();
+  assert.equal(guideKey('guide-45c.trustevo.co.uk', ''), '45c');
+  assert.equal(guideKey('guide-45c.trustevo.co.uk', '?utm_source=facebook'), '45c');
+  assert.equal(guideKey('guide-wtp.trustevo.co.uk', ''), 'wtp');
+  assert.equal(guideKey('guide-wtp.trustevo.co.uk', '?utm_campaign=Launch'), 'wtp');
+  assert.equal(guideKey('preview-abc.vercel.app', '?g=45c'), '45c');
+  assert.equal(guideKey('preview-abc.vercel.app', '?utm_source=facebook&g=45C'), '45c');
+  assert.equal(guideKey('guide-wtp.trustevo.co.uk', '?g=45c'), '45c');
+  assert.equal(guideKey('preview-abc.vercel.app', ''), 'wtp');
+  assert.equal(guideKey('not-a-host.example', '?g=nope'), 'wtp');
+  assert.equal(guideKey('not-a-host.example', '', '45c'), '45c');
+  assert.equal(guideKey('guide-wtp.trustevo.co.uk', '', '45c'), 'wtp');
+  assert.equal(guideKey('', ''), 'wtp');
 });

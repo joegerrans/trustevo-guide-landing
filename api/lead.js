@@ -24,6 +24,31 @@ const GUIDES = {
   wtp: { name: 'The Wealth Turning Point', campaignFallback: 'Landing Page - The Wealth Turning Point', code: 'WTP' },
   '45c': { name: 'The 45% Club', campaignFallback: 'Landing Page - The 45% Club', code: '45C' }
 };
+// Production hostnames. Anything else stays on the guide sent by the page, or wtp.
+const GUIDE_HOSTS = {
+  'guide-wtp.trustevo.co.uk': 'wtp',
+  'guide-45c.trustevo.co.uk': '45c'
+};
+
+function requestHost(req) {
+  const headers = (req && req.headers) || {};
+  const raw = headers['x-forwarded-host'] || headers.host || '';
+  return String(raw).split(',')[0].trim().split(':')[0].toLowerCase();
+}
+
+// A known guide in the body wins, so the page's ?g= override is kept on preview hosts.
+// An unknown value never throws: a known guide hostname is used, otherwise wtp.
+function resolveGuide(host, guide) {
+  const key = typeof guide === 'string' ? guide.trim().toLowerCase() : '';
+  if (GUIDES[key]) return key;
+  const fromHost = GUIDE_HOSTS[requestHost({ headers: { host: host } })];
+  return fromHost || 'wtp';
+}
+
+// LP Consent marker. The n8n guide-email workflow matches "| guide-<key> |" and "| guide-<key>/access |".
+function consentMarker(guide, route) {
+  return `guide-${guide}${route === 'access' ? '/access' : ''}`;
+}
 
 // Value per lead = meeting price x 0.70 contact x 0.20 booked x 0.65 held
 const BANDS = {
@@ -564,8 +589,7 @@ async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false });
   const b = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
   const route = b.route === 'access' ? 'access' : 'ad';
-  if (typeof b.guide === 'string') b.guide = b.guide.toLowerCase();
-  if (!GUIDES[b.guide]) b.guide = 'wtp';
+  b.guide = resolveGuide(requestHost(req), b.guide);
   const test = !process.env.AIRTABLE_TOKEN;
 
   try {
@@ -578,7 +602,7 @@ async function handler(req, res) {
       if (test) return res.json({ ok: true, test: true, recordId: 'test', sig: sign('test') });
 
       const t = b.track || {};
-      const consent = `${new Date().toISOString()} | ${route === 'access' ? 'guide-wtp/access' : 'guide-wtp'} | ${CONSENT_TEXT}`;
+      const consent = `${new Date().toISOString()} | ${consentMarker(b.guide, route)} | ${CONSENT_TEXT}`;
       let emailDuplicate = false;
       if (route !== 'access') {
         try { emailDuplicate = !!(await findByEmail(email)); } catch (e) { emailDuplicate = false; }
@@ -596,7 +620,7 @@ async function handler(req, res) {
         rec = await write(rec.id, typedEmailFields(consent, email, storedEmail));
       } else if (route === 'access') {
         const sig = signPending(pendingPayload(b, email, consent, t));
-        await n8n({ step: 'start', route, created: false, recordId: null, email, first: b.first, last: b.last, track: t, sig });
+        await n8n({ step: 'start', guide: b.guide, route, created: false, recordId: null, email, first: b.first, last: b.last, track: t, sig });
         return res.json({ ok: true, recordId: null, sig });
       } else {
         created = true;
@@ -610,7 +634,7 @@ async function handler(req, res) {
         if (emailDuplicate) fields[F.duplicate] = true;
         rec = await write(null, fields);
       }
-      await n8n({ step: 'start', route, created, recordId: rec.id, email, first: b.first, last: b.last, track: t });
+      await n8n({ step: 'start', guide: b.guide, route, created, recordId: rec.id, email, first: b.first, last: b.last, track: t });
       const sig = route === 'access' && created ? signNew(rec.id) : sign(rec.id);
       return res.json({ ok: true, recordId: rec.id, sig });
     }
@@ -667,7 +691,7 @@ async function handler(req, res) {
         }
         await write(session.id, fields);
       }
-      await n8n({ step: 'phone', route, recordId: targetId, phone: e164, lineStatus: lk.status || null });
+      await n8n({ step: 'phone', guide: b.guide, route, recordId: targetId, phone: e164, lineStatus: lk.status || null });
       return res.json({ ok: true, recordId: targetId, sig: sign(targetId) });
     }
 
@@ -683,7 +707,7 @@ async function handler(req, res) {
         b.eventId = b.eventId || crypto.randomUUID();
         await capi(b, rec, req, route === 'access' ? 'ConfirmedLead' : 'Lead', BANDS[b.band].value);
       }
-      await n8n({ step: 'band', route, recordId: rec.id, band: BANDS[b.band].label, value: BANDS[b.band].value });
+      await n8n({ step: 'band', guide: b.guide, route, recordId: rec.id, band: BANDS[b.band].label, value: BANDS[b.band].value });
       return res.json({ ok: true });
     }
 
@@ -714,6 +738,9 @@ handler.nameForMatch = nameForMatch;
 handler.exactNameFormula = exactNameFormula;
 handler.phoneAnyFormula = phoneAnyFormula;
 handler.accessCreateSource = accessCreateSource;
+handler.resolveGuide = resolveGuide;
+handler.requestHost = requestHost;
+handler.consentMarker = consentMarker;
 handler.typedEmailFields = typedEmailFields;
 handler.NOTE_FIELDS = NOTE_FIELDS;
 handler.resetNoteFieldCache = resetNoteFieldCache;

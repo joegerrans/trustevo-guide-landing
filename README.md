@@ -1,11 +1,13 @@
 # TrustEvo guide landing pages
 
-One site with two routes for The Wealth Turning Point:
+One site with two routes. The guide is chosen by hostname: `guide-wtp.trustevo.co.uk` is The Wealth Turning Point, and `guide-45c.trustevo.co.uk` is The 45% Club. Any other hostname shows The Wealth Turning Point. A preview URL can show The 45% Club with `?g=45c`.
 
 | URL | Who lands here | Step 1 heading |
 |---|---|---|
 | guide-wtp.trustevo.co.uk | People clicking an ad straight to the page | Where should we send your guide? |
 | guide-wtp.trustevo.co.uk/access | People clicking "Open my guide" after the Meta form | Please confirm your details |
+| guide-45c.trustevo.co.uk | The same ad route, for The 45% Club | Where should we send your guide? |
+| guide-45c.trustevo.co.uk/access | The same confirm route, for The 45% Club | Please confirm your details |
 
 The steps are: name, email and consent, then mobile (with a Twilio check), then the band question, then the guide page.
 
@@ -74,3 +76,16 @@ You can change these in `api/lead.js` (BANDS) and in `public/index.html` (BANDS)
 ## Test mode
 
 Without AIRTABLE_TOKEN the site runs in test mode. A yellow bar shows and nothing is saved. In test mode, 07700 900xxx numbers fail the phone check, so you can see the error.
+
+## Updating a guide PDF
+
+1. Replace the PDF in the guide repo.
+2. If the filename changed, update the `/pdf` redirect destination in that repo's `vercel.json`.
+3. Push.
+
+The landing page and the guide emails use the permanent link, so they open the file you just published. Never link to the `.pdf` filename or add `?v=`.
+
+- https://wealth-turning-point.trustevo.co.uk/pdf
+- https://45-percent-club.trustevo.co.uk/pdf
+
+Add `guide-45c.trustevo.co.uk` under Vercel, then Settings, then Domains, and add the CNAME it shows at the DNS provider. `guide-45c.trustevo.co.uk/access` uses the same confirm route as Wealth Turning Point.

@@ -242,7 +242,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
     <section id="s4" hidden>
       <div class="ty">Thank you, <span class="nm"></span>.<em>Your guide is ready.</em></div>
       <a class="btn t" id="gi" href="https://wealth-turning-point.trustevo.co.uk/" target="_blank" rel="noopener" style="margin-top:22px">Open the interactive guide</a>
-      <a class="btn o" id="gp" href="https://wealth-turning-point.trustevo.co.uk/The-Wealth-Turning-Point-2026-27.pdf" target="_blank" rel="noopener">Download the PDF</a>
+      <a class="btn o" id="gp" href="https://wealth-turning-point.trustevo.co.uk/pdf" target="_blank" rel="noopener">Download the PDF</a>
       <div class="intro">
         <h3>Prefer to talk it through?</h3>
         <p>We can arrange a free, no-obligation introduction to a vetted, FCA-regulated adviser.</p>
@@ -290,10 +290,93 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
   <div class="bt"><button class="a" id="cka">Accept all</button><button class="r" id="ckr">Reject non-essential</button></div></div></div>
 
 <script>
+// Guide copy, links and the PDF permalink. WTP stays the default in the HTML above.
+// guide-45c.trustevo.co.uk selects 45c. Any other host stays on wtp. ?g=45c overrides for preview URLs.
+window.TE_GUIDES = {
+  wtp: {
+    name: 'The Wealth Turning Point',
+    title: 'The Wealth Turning Point | TrustEvo',
+    desc: 'The Complete Guide to Retirement and Inheritance Planning. A free 16 chapter guide from TrustEvo.',
+    h1: 'The Wealth<em>Turning Point</em>',
+    sub: 'The Complete Guide to Retirement &amp; Inheritance Planning',
+    sub2: '16 chapters, interactive and PDF, plus ongoing insights',
+    url: 'https://wealth-turning-point.trustevo.co.uk/',
+    pdf: 'https://wealth-turning-point.trustevo.co.uk/pdf',
+    toc: ['What Are You Retiring For?','Establish Complete Visibility','How Long Must the Money Last?',
+      'Income Layering &amp; Tax Compression','The Early-Retirement Window','Withdrawals That Survive 30 Years',
+      'The Final Working Years','The Vehicle Room','The Multi-Vehicle Playbook','What Coordination Is Worth',
+      'Estate, Inheritance Tax &amp; the 2027 Pension Change','Ten Costly Retirement Mistakes','Care Costs &amp; Later Life',
+      'Survivorship &amp; Legacy','A 25-Year Retirement, Modelled','Next Steps']
+  },
+  '45c': {
+    name: 'The 45% Club',
+    title: 'The 45% Club | TrustEvo',
+    desc: 'The Complete Financial Planning Guide for Additional Rate Taxpayers. A free 16 chapter guide from TrustEvo.',
+    h1: 'The 45%<em>Club</em>',
+    sub: 'The Complete Financial Planning Guide for Additional Rate Taxpayers',
+    sub2: '16 chapters, interactive and PDF, plus ongoing insights',
+    url: 'https://45-percent-club.trustevo.co.uk/',
+    pdf: 'https://45-percent-club.trustevo.co.uk/pdf',
+    toc: ['The 60% Tax Band','Tax Planning for Additional Rate Taxpayers','Cash Reserves &amp; Debt Management',
+      'Protection at Higher Incomes','Pension Funding &amp; the Allowances','Investment Wrappers &amp; Advanced Structures',
+      'Income Layering &amp; Tax Compression','Longevity, Inflation &amp; the Horizon','The Early-Retirement Window',
+      'Withdrawals That Survive 30 Years','The Multi-Vehicle Drawdown Playbook','Eleven Costly Planning Mistakes',
+      'Bringing the Plan Together','Estate, Inheritance Tax, Wills &amp; LPAs','Specialist Planning Areas',
+      'A 25-Year Model, Worked Through']
+  }
+};
+function guideKey(hostname, search, stored){
+  var known = { wtp: 1, '45c': 1 };
+  var q = '';
+  try { q = new URLSearchParams(String(search || '')).get('g') || ''; } catch (e) { q = ''; }
+  q = String(q).toLowerCase();
+  if (known[q]) return q;
+  var host = String(hostname || '').toLowerCase().split(':')[0];
+  if (host === 'guide-45c.trustevo.co.uk') return '45c';
+  if (host === 'guide-wtp.trustevo.co.uk') return 'wtp';
+  var saved = String(stored || '').toLowerCase();
+  if (known[saved]) return saved;
+  return 'wtp';
+}
+function applyGuide(key){
+  var g = window.TE_GUIDES[key] || window.TE_GUIDES.wtp;
+  document.title = g.title;
+  var md = document.querySelector('meta[name="description"]');
+  if (md) md.setAttribute('content', g.desc);
+  var h1 = document.querySelector('#s1 .hero h1');
+  if (h1) h1.innerHTML = g.h1;
+  var sub = document.querySelector('#s1 .hero .sub');
+  if (sub) sub.innerHTML = g.sub;
+  var sub2 = document.querySelector('#s1 .hero .sub2');
+  if (sub2) sub2.textContent = g.sub2;
+  var ol = document.querySelector('#s1 .toc ol');
+  if (ol) ol.innerHTML = g.toc.map(function(t, i){
+    return '<li><span class="n">' + (i < 9 ? '0' : '') + (i + 1) + '</span><span class="t">' + t + '</span></li>';
+  }).join('');
+  var gi = document.getElementById('gi');
+  var gp = document.getElementById('gp');
+  if (gi) gi.href = g.url;
+  if (gp) gp.href = g.pdf;
+}
+(function(){
+  var search = location.search;
+  var stored = '';
+  try { stored = sessionStorage.getItem('te_guide') || ''; } catch (e) { stored = ''; }
+  var key = guideKey(location.hostname, search, stored);
+  var q = '';
+  try { q = new URLSearchParams(search).get('g') || ''; } catch (e2) { q = ''; }
+  if (q && (String(q).toLowerCase() === 'wtp' || String(q).toLowerCase() === '45c')) {
+    try { sessionStorage.setItem('te_guide', key); } catch (e3) {}
+  }
+  window.TE_GUIDE_KEY = key;
+  applyGuide(key);
+})();
+</script>
+<script>
 (function(){
   // ---------- settings ----------
   var CFG = {
-    guide: 'wtp',
+    guide: window.TE_GUIDE_KEY || 'wtp',
     pixelId: '2661357387563956',            // set your Meta Pixel ID here, e.g. '1234567890'
     api: '/api/lead'
   };
@@ -442,7 +525,7 @@ footer{background:#0A2339;color:#fff;border-top:1px solid rgba(255,255,255,.05);
     busy($('b3'),true);
     post({action:'band',band:state.band,eventId:eid}).then(function(r){
       busy($('b3'),false);
-      px(ev,{value:b.value,currency:'GBP',content_name:'The Wealth Turning Point'},eid);
+      px(ev,{value:b.value,currency:'GBP',content_name:(window.TE_GUIDES[CFG.guide]||window.TE_GUIDES.wtp).name},eid);
       show(4);
     }).catch(function(){busy($('b3'),false);show(4)});
   });
