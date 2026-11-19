@@ -553,11 +553,12 @@ function applyGuide(key){
   $('f3').addEventListener('submit',function(e){
     e.preventDefault();
     if(!state.band) return err('e3','Please choose one option');
-    var eid=uid(), ev=(route==='access')?'ConfirmedLead':'Lead', b=BANDS[state.band];
+    // ConfirmedLead is skipped for Under £100,000 (same rule as api/lead.js); Lead fires for every band
+    var eid=uid(), ev=(route==='access')?(state.band==='u100'?null:'ConfirmedLead'):'Lead', b=BANDS[state.band];
     busy($('b3'),true);
     post({action:'band',band:state.band,eventId:eid}).then(function(r){
       busy($('b3'),false);
-      px(ev,{value:b.value,currency:'GBP',content_name:(window.TE_GUIDES[CFG.guide]||window.TE_GUIDES.wtp).name},eid);
+      if(ev) px(ev,{value:b.value,currency:'GBP',content_name:(window.TE_GUIDES[CFG.guide]||window.TE_GUIDES.wtp).name},eid);
       show(4);
     }).catch(function(){busy($('b3'),false);show(4)});
   });

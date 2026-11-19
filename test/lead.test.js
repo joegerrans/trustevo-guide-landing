@@ -1299,3 +1299,73 @@ test('the page chooses 45c from the host or ?g=45c and leaves every other host o
   assert.equal(guideKey('guide-wtp.trustevo.co.uk', '', '45c'), 'wtp');
   assert.equal(guideKey('', ''), 'wtp');
 });
+
+test('access skips ConfirmedLead for Under £100,000 and still sends it for higher bands', async () => {
+  assert.equal(lead.metaEventFor('access', 'u100'), null);
+  assert.equal(lead.metaEventFor('access', '100-250'), 'ConfirmedLead');
+  assert.equal(lead.metaEventFor('access', '500p'), 'ConfirmedLead');
+  assert.equal(lead.metaEventFor('ad', 'u100'), 'Lead');
+
+  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(html, /state\.band==='u100'\?null:'ConfirmedLead'/);
+  assert.match(html, /if\(ev\) px\(ev,/);
+
+  process.env.META_PIXEL_ID = 'pixel-test';
+  process.env.META_CAPI_TOKEN = 'capi-test';
+  process.env.N8N_WEBHOOK = 'https://n8n.example/hook';
+  const meta = { platform: 'facebook' };
+  try {
+    for (const guide of ['wtp', '45c']) {
+      const calls = installAirtable();
+      const start = await post(startBody({
+        guide,
+        email: `${guide}-u100@example.com`,
+        track: meta
+      }));
+      const phone = await confirmAccess(start, guide);
+      assert.equal(phone.body.ok, true);
+      const band = await post({
+        action: 'band', route: 'access', guide, band: 'u100', eventId: `evt-${guide}-u100`,
+        recordId: phone.body.recordId, sig: phone.body.sig, track: meta
+      });
+      assert.equal(band.body.ok, true);
+      assert.equal(capiCalls(calls).length, 0);
+      const bandPatch = calls.find((call) => call.body && call.body.fields && call.body.fields['Self-Declared Band']);
+      assert.equal(bandPatch.body.fields['Self-Declared Band'], 'Under £100,000');
+      const hooks = calls.filter((call) => String(call.url).includes('n8n.example') && call.body && call.body.step === 'band');
+      assert.equal(hooks.length, 1);
+      assert.equal(hooks[0].body.band, 'Under £100,000');
+      assert.equal(hooks[0].body.guide, guide);
+      assert.equal(hooks[0].body.route, 'access');
+    }
+
+    const bands = [
+      ['100-250', 36, 'evt-100-250'],
+      ['250-500', 50, 'evt-250-500'],
+      ['500p', 64, 'evt-500p']
+    ];
+    for (const [bandKey, value, eventId] of bands) {
+      const calls = installAirtable();
+      const start = await post(startBody({
+        email: `${bandKey}@example.com`,
+        track: meta
+      }));
+      const phone = await confirmAccess(start);
+      const band = await post({
+        action: 'band', route: 'access', guide: 'wtp', band: bandKey, eventId,
+        recordId: phone.body.recordId, sig: phone.body.sig, track: meta
+      });
+      assert.equal(band.body.ok, true);
+      const sent = capiCalls(calls);
+      assert.equal(sent.length, 1, bandKey);
+      assert.equal(sent[0].body.data[0].event_name, 'ConfirmedLead');
+      assert.equal(sent[0].body.data[0].event_id, eventId);
+      assert.equal(sent[0].body.data[0].custom_data.value, value);
+      assert.equal(sent[0].body.data[0].custom_data.currency, 'GBP');
+    }
+  } finally {
+    delete process.env.META_PIXEL_ID;
+    delete process.env.META_CAPI_TOKEN;
+    delete process.env.N8N_WEBHOOK;
+  }
+});

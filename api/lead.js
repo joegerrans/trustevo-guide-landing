@@ -214,6 +214,13 @@ function headerCookie(req, name) {
   try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
 }
 
+// Which Meta event the band step sends. ConfirmedLead (/access) is the quality signal,
+// so it is skipped for 'Under £100,000' answers. The ad-route Lead still fires for every band.
+function metaEventFor(route, band) {
+  if (route === 'access') return band === 'u100' ? null : 'ConfirmedLead';
+  return 'Lead';
+}
+
 // Lead and ConfirmedLead only. _fbc counts here; it does not change Funnel Source.
 function metaTraffic(track, fbc) {
   return META_UTM.has(trackSource(track)) || !!trackFbclid(track) || !!String(fbc || '').trim();
@@ -702,10 +709,11 @@ async function handler(req, res) {
       if (test) return res.json({ ok: true, test: true });
       const rec = await write(session.id, { [F.band]: BANDS[b.band].label });
       const fbc = headerCookie(req, '_fbc') || b.fbc || '';
-      if (metaTraffic(b.track, fbc)) {
+      const eventName = metaEventFor(route, b.band);
+      if (eventName && metaTraffic(b.track, fbc)) {
         if (!b.fbc) b.fbc = fbc;
         b.eventId = b.eventId || crypto.randomUUID();
-        await capi(b, rec, req, route === 'access' ? 'ConfirmedLead' : 'Lead', BANDS[b.band].value);
+        await capi(b, rec, req, eventName, BANDS[b.band].value);
       }
       await n8n({ step: 'band', guide: b.guide, route, recordId: rec.id, band: BANDS[b.band].label, value: BANDS[b.band].value });
       return res.json({ ok: true });
@@ -723,6 +731,7 @@ handler.directCampaign = directCampaign;
 handler.funnelSource = funnelSource;
 handler.adCampaign = adCampaign;
 handler.metaTraffic = metaTraffic;
+handler.metaEventFor = metaEventFor;
 handler.emailFormula = emailFormula;
 handler.accessCampaign = accessCampaign;
 handler.accessAdset = accessAdset;

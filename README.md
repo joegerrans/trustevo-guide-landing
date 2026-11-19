@@ -54,7 +54,7 @@ The steps are: name, email and consent, then mobile (with a Twilio check), then 
 |---|---|---|
 | Step 1 | New lead: Full Name, Email, Lead Status New, Funnel Source from the visit, tracking fields, LP Consent. With no utm_campaign, Campaign Name is the source and medium, such as "LinkedIn post" | Finds the Meta form lead by email and adds LP Consent. If there's no match, it creates a new lead with Funnel Source "Meta" |
 | Step 2 | Phone and Valid Number? | Confirmed Phone, LP Confirmed and LP Confirmed At. The original Phone is left alone |
-| Step 3 | Self-Declared Band. A CAPI **Lead** event is sent only for Meta traffic (Facebook, Instagram, fb, ig, fbclid, or _fbc) | Self-Declared Band. A CAPI **ConfirmedLead** event uses the same Meta-traffic rule |
+| Step 3 | Self-Declared Band. A CAPI **Lead** event is sent only for Meta traffic (Facebook, Instagram, fb, ig, fbclid, or _fbc) | Self-Declared Band. A CAPI **ConfirmedLead** event uses the same Meta-traffic rule, but an Under £100,000 answer sends none (CAPI or pixel) |
 
 ## Phone check
 
